@@ -1,5 +1,7 @@
 # Serial deployment after a swarm
 
+Protocol reference set: `1.2.0`.
+
 Read this file only when the user authorized deployment and the graph contains a deployment node.
 
 Deployment is never a parallel worker wave. Quiesce all builders and integrators first. A Luna Medium deployment owner executes the settled release plan; it does not invent one during release. If production evidence invalidates the plan, stop and return evidence to the Sol coordinator.

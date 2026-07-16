@@ -1,8 +1,8 @@
-"""Repository hygiene checks required by the Phase 1 acceptance criteria.
+"""Repository hygiene and release-consistency checks for GPT-5.6 Swarm.
 
 These run in CI and locally: no runtime ledgers committed, no secret-shaped
-strings in tracked files, and the skill still packages as a valid Codex skill
-(frontmatter with name + description).
+strings in tracked files, resolvable documentation links, synchronized release
+contracts, and a valid Codex skill package.
 """
 
 import re
@@ -142,6 +142,75 @@ class TestRepoHygiene(unittest.TestCase):
                          set(sl.REQUIRED_RECEIPT_KEYS))
         self.assertEqual(set(receipt_schema["properties"]["status"]["enum"]),
                          {"SUCCEEDED", "FAILED", "ABORTED", "CANCELED"})
+
+    def test_release_contract_consistency(self):
+        import importlib.util
+        tool = SKILL_DIR / "scripts" / "swarm_ledger.py"
+        spec = importlib.util.spec_from_file_location("swarm_release", tool)
+        sl = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sl)
+        current = {
+            "protocol": sl.PROTOCOL_VERSION,
+            "schema": sl.SCHEMA_VERSION,
+            "tool": sl.TOOL_VERSION,
+        }
+        skill = (SKILL_DIR / "SKILL.md").read_text("utf-8")
+        enforcement = (SKILL_DIR / "references" /
+                       "ENFORCEMENT.md").read_text("utf-8")
+        changelog = (REPO_ROOT / "CHANGELOG.md").read_text("utf-8")
+        example = json.loads((REPO_ROOT / "examples" /
+                              "ledger.example.json").read_text("utf-8"))
+        self.assertIn(f"Protocol version `{current['protocol']}`", skill)
+        self.assertIn(f"currently `{current['protocol']}`", enforcement)
+        self.assertIn(f"currently `{current['tool']}`", enforcement)
+        self.assertIn(
+            f"protocol {current['protocol']} / schema {current['schema']} / "
+            f"tool {current['tool']}", changelog)
+        self.assertEqual(example["protocol_version"], current["protocol"])
+        self.assertEqual(example["schema_version"], current["schema"])
+        self.assertEqual(example["tool_version"], current["tool"])
+        for relative in sl.REFERENCE_SET_FILES:
+            text = (SKILL_DIR / relative).read_text("utf-8")
+            self.assertEqual(text.count(sl.REFERENCE_SET_STAMP), 1, relative)
+
+        workflow = (REPO_ROOT / ".github" / "workflows" /
+                    "ci.yml").read_text("utf-8")
+        self.assertIn("actions/checkout@v7", workflow)
+        self.assertIn("actions/setup-python@v6", workflow)
+        self.assertIn("actions/upload-artifact@v7", workflow)
+        self.assertIn("cache-dependency-path: requirements-dev.txt", workflow)
+        self.assertIn("python -m coverage report", workflow)
+        coverage = (REPO_ROOT / ".coveragerc").read_text("utf-8")
+        self.assertRegex(coverage, r"(?m)^fail_under\s*=\s*85$")
+        requirements = (REPO_ROOT / "requirements-dev.txt").read_text(
+            "utf-8")
+        self.assertRegex(requirements, r"(?m)^coverage==[0-9]+\.[0-9]+\.[0-9]+$")
+        self.assertEqual((REPO_ROOT / "LICENSE").read_bytes(),
+                         (SKILL_DIR / "LICENSE").read_bytes())
+        for notice in (REPO_ROOT / "THIRD_PARTY_NOTICES.md",
+                       SKILL_DIR / "THIRD_PARTY_NOTICES.md"):
+            text = notice.read_text("utf-8")
+            self.assertIn("0dd1cc4359aef62f33168f8824333aceed05eac5", text)
+            self.assertIn("Forward Future", text)
+            self.assertIn("MIT", text)
+
+    def test_internal_markdown_links_resolve(self):
+        link_re = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
+        offenders = []
+        for path in self.files:
+            if path.suffix.lower() != ".md":
+                continue
+            text = path.read_text(encoding="utf-8")
+            for raw in link_re.findall(text):
+                target = raw.strip().split(maxsplit=1)[0].strip("<>")
+                if not target or target.startswith(("#", "http://", "https://",
+                                                    "mailto:")):
+                    continue
+                relative = target.split("#", 1)[0]
+                resolved = (path.parent / relative).resolve()
+                if not resolved.exists():
+                    offenders.append(f"{path.relative_to(REPO_ROOT)} -> {target}")
+        self.assertEqual(offenders, [], "broken internal Markdown links")
 
 
 if __name__ == "__main__":

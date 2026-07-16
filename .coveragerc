@@ -1,0 +1,9 @@
+[run]
+source = .agents/skills/gpt-5-6-swarm/scripts
+patch = subprocess
+
+[report]
+fail_under = 85
+precision = 2
+show_missing = True
+skip_covered = True

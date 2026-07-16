@@ -1,6 +1,12 @@
 .DS_Store
 
-# Swarm runtime state is never committed (Phase 1 enforcement)
+# Swarm runtime control-plane state is never committed
 .swarm/runs/
 __pycache__/
 *.py[cod]
+
+# Development coverage output
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/

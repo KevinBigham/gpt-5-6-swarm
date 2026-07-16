@@ -1,10 +1,18 @@
 # Host capability matrix
 
+Protocol reference set: `1.2.0`.
+
 Swarm's guarantees are only as real as the host features they stand on.
-This file separates three things that are often blurred: what the protocol
+This file separates four things that are often blurred: what the protocol
 *requires*, what the current host has been *verified* to provide, and what
-is *optional or experimental*. Never promote a claim across tiers without
+is *optional or experimental*, plus what only a real external fence can provide. Never promote a claim across tiers without
 re-verification.
+
+Use these exact capability keys with `init`: `thread_creation`,
+`thread_listing`, `result_collection`, `child_turn_read`, `model_selection`,
+`effort_selection`, `unique_launch_discovery`, `cancel_interrupt`,
+`background_sessions`, `worktree_control`, `resource_fencing`, and
+`one_shot_fence`. Undeclared means false.
 
 ## Tier 1 - protocol requirements (host-independent)
 
@@ -13,12 +21,13 @@ cannot provide one, `SKILL.md` prescribes narrowing the route:
 
 | Requirement | Fallback when absent |
 | --- | --- |
-| Create host-managed child threads with coordinator-visible identity, lifecycle, and results | do the work serially in the coordinator |
-| Read a child thread's turns (nonce discovery) | no guarded classes: `PURE`/`ISOLATED` only |
+| `thread_creation`, `thread_listing`, and `result_collection` for host-managed children | do the work serially in the coordinator |
+| `child_turn_read` for nonce evidence | no guarded classes: `PURE`/`ISOLATED` only |
 | Unique-launch discovery (find a nonce among threads) | prohibit `NON_IDEMPOTENT`, `EXCLUSIVE_UNKNOWN`, `ONE_SHOT` (enforced) |
 | Cooperative cancel or interrupt of a child | treat cancellation as advisory; plan for orphans |
 | Local command execution and permitted control-plane state writes | prompt-only ledger discipline (enforcement tool unavailable) |
-| Isolated write locations (worktrees/branches) | single-writer route |
+| Isolated write locations (`worktree_control`) | single-writer route |
+| Fresh output, target-side idempotency/transaction, or effective fence (`one_shot_fence`) | prohibit `ONE_SHOT` (enforced) |
 
 The enforcement tool snapshots what the coordinator declares at `init` and
 holds the run to it; it cannot itself verify the host. Declare only what
@@ -44,9 +53,9 @@ Verified facts relevant to Swarm:
 | Multi-agent support is stable and on by default (`features.multi_agent`) | local feature list + Codex manual | persistent subagent threads are a first-class host feature; discover the actual tool vocabulary exposed by the current surface rather than hardcoding names |
 | `agents.max_depth` defaults to `1` | config reference | the host itself blocks nested delegation at default settings - keep it at 1; Swarm's prohibition assumes it |
 | `agents.max_threads` defaults to `6` when unset | Codex manual | this is only a configuration default; use a lower live-session slot limit when the surface exposes one |
-| Project custom agents may be standalone `.codex/agents/*.toml` files with `name`, `description`, and `developer_instructions`; config-file mappings also exist in the configuration reference | Codex manual + config reference | inspect the current host schema before shipping presets; do not invent an agent manifest format |
+| Personal custom agents may be standalone `~/.codex/agents/*.toml` files and project agents `.codex/agents/*.toml`, each with `name`, `description`, and `developer_instructions`; `model` and `model_reasoning_effort` are optional | Codex manual | a verified custom agent can pin model/effort only when the current spawn surface can select that agent; file presence alone is not selection proof |
 | Reasoning efforts are model-dependent and can include `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, and `ultra` | Codex manual | record only an effort supported by the selected model on the current host |
-| This local surface exposes four total concurrency slots including the root, and its spawn call does not expose per-child model/effort selectors or arbitrary child-turn search | current session tool contract | cap the live peak at three here; keep the current coordinator when child model/effort cannot be pinned; do not claim nonce discovery unless a separate thread-read/listing surface proves it |
+| This local surface exposes four total concurrency slots including the root, and its spawn call does not expose per-child agent/model/effort selectors or arbitrary child-turn search | current session tool contract | cap the live peak at three here; host-selected routing may occur but is not a pinned model claim; keep the current coordinator when child model/effort cannot be pinned; do not claim nonce discovery unless a separate turn-reading surface proves it |
 | Lifecycle hooks exist with `SubagentStart`/`SubagentStop` events (`features.hooks`) | config reference | future enforcement integration point (Phase 2+), not used in Phase 1 |
 
 ## Tier 3 - optional and experimental (gated, fail closed)
@@ -60,6 +69,10 @@ Verified facts relevant to Swarm:
 | Explicit API prompt-cache breakpoints | real at the API level | not claimed controllable inside ordinary Codex child threads; do not design routes that depend on it |
 | Luna long-context routing | no repository-owned evaluation baseline yet | conservative slicing heuristic in `references/ROUTES.md`, not a threshold or prohibition; replace with measured guidance after local evals |
 
+## Tier 4 - real external fencing (not supplied by Codex)
+
+The ledger can prevent its own duplicate recorded dispatch and reject overlapping declared scopes. It cannot lock an uncooperative Git writer, database row, service, deployment target, or one-shot external effect. Call a run fully fenced only when every relevant writer honors a real lock, transaction, generation token, or target-side idempotency key. No current Codex client feature supplies that guarantee by itself.
+
 ## Verification procedure for a new host
 
 1. `codex --version` - record it in the run's capability snapshot rationale.
@@ -68,7 +81,8 @@ Verified facts relevant to Swarm:
 3. `codex debug models` - confirm the model IDs and the effort levels each
    supports before routing depends on them (especially `xhigh`/`max`).
 4. Confirm `agents.max_depth` is 1, note `agents.max_threads`, and prefer any lower live-session concurrency limit surfaced by the client.
-5. Inspect whether the current spawn surface can pin each child's model and effort, discover an ambiguous launch nonce, read child turns, and interrupt a child. Treat each as a separate capability.
+5. Inspect whether the current spawn surface can select a custom agent, pin each child's model and effort, discover an ambiguous launch nonce, read child turns, and interrupt a child. Treat each as a separate capability; do not infer one from another.
 6. Declare exactly what you verified via `init --capability k=v`, nothing
    more. An undeclared capability is treated as absent by the enforcement
    tool - by design.
+7. Run `show` and place its capability tier plus disabled-feature list in the kickoff. The derived tier is a summary of declarations, not an independent host probe.

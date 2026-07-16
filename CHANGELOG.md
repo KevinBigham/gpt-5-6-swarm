@@ -13,6 +13,26 @@ promised.
 - **tool version** - `swarm_ledger.py` build, recorded in every ledger it
   writes.
 
+## protocol 1.2.0 / schema 1 / tool 0.2.0 - Audit hardening (2026-07-15)
+
+- Scoped public claims into executable, prompt-instructed, host-gated, and
+  externally fenced layers; model routing is now explicitly reported as
+  pinned or host-selected.
+- Added fail-closed packaged reference-set stamps and `verify-reference-set`;
+  `init` refuses missing or mixed-version normative documents.
+- Added derived capability tiers/disabled-feature reporting and standardized
+  capability declaration names.
+- Added read-only Git baseline capture/verification so HEAD and dirty-state
+  drift can exit 7 before mutation or integration.
+- Added `one_shot_fence` gating. One-shot work now needs both authoritative
+  launch discovery and a verified fresh-output/target fence declaration.
+- Added the untrusted-artifact boundary, `UNKNOWN` operator runbook,
+  invariant-to-test traceability, public roadmap, real-process race coverage,
+  atomic-replace failure coverage, cross-file consistency checks, and an 85%
+  ledger coverage gate in CI.
+- Runtime remains Python 3.9+ standard-library-only; `coverage` is a pinned
+  development/CI dependency, not a runtime dependency.
+
 ## protocol 1.1.0 / schema 1 / tool 0.1.0 - Phase 1 (2026-07-15)
 
 - Added the deterministic enforcement core: run-local ledger under

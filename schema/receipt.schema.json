@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://github.com/KevinBigham/gpt-5-6-swarm/schema/receipt.schema.json",
   "title": "Swarm worker receipt (JSON transcription)",
-  "description": "The JSON form of the evidence-bearing terminal receipt from references/REPORTING.md. Informational: scripts/swarm_ledger.py additionally enforces identity, pinned base, model/effort, touched-path scope, resource accounting, no live processes, and no descendants.",
+  "description": "The JSON form of the evidence-bearing terminal receipt from references/REPORTING.md. Informational: scripts/swarm_ledger.py additionally checks recorded identity, pinned base, model/effort, touched-path scope, resource accounting, no reported live processes, and no reported descendants. A receipt is a claim, not authentication.",
   "type": "object",
   "additionalProperties": false,
   "required": ["run_id", "node_id", "attempt", "status", "thread_id",
