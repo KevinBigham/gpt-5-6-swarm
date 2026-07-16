@@ -2,6 +2,8 @@
 
 Read this reference completely before dispatch.
 
+When deterministic enforcement is active, transcribe a worker's evidence receipt into JSON and attach it when a live execution enters `SUCCEEDED`, `FAILED`, `ABORTED`, or `CANCELED` via `scripts/swarm_ledger.py`; the YAML form below is both the field contract and the chat-visible presentation. A repository checkout also provides the informational `schema/receipt.schema.json`. The ledger validates receipt identity, the pinned base, touched-path scope, resource accounting, and proof that no worker process or descendant remains before accepting a known terminal outcome. `UNKNOWN` records ambiguity evidence instead of pretending the execution is terminal.
+
 ## Kickoff
 
 Tell the user the chosen mode and ceilings before creating workers:
@@ -42,7 +44,7 @@ Require evidence in this shape (YAML may be embedded in prose when necessary):
 run_id: ...
 node_id: ...
 attempt: 1
-status: SUCCEEDED
+status: SUCCEEDED # or FAILED, ABORTED, CANCELED
 thread_id: ...
 model_effort: terra/high
 base_revision: ...
@@ -64,6 +66,8 @@ cleanup_items: []
 ```
 
 “Done” is not a gate. The coordinator verifies the actual artifact, process exit, resource reconciliation, and check output.
+
+The receipt is a consistency-checked worker claim, not a signature. Verify the referenced artifact, hashes, touched paths, and command results independently before accepting the gate.
 
 ## Progress
 
@@ -103,7 +107,7 @@ Lead with the actual outcome, then provide the smallest useful receipt:
 
 Also state:
 
-- coordinator thread (current or proxy), total visible children, actual worker nodes created, and scheduler-issued peak concurrency; call peak “observed” only when the host exposes authoritative active-thread telemetry;
+- coordinator thread (current or proxy), total accounted children, actual worker nodes created, and scheduler-issued peak concurrency; call peak “observed” only when the host exposes authoritative active-thread telemetry;
 - integrated revision/output and combined checks;
 - corrections, escalations, substitutions, invalidations, disagreements, and skipped lanes with reasons;
 - authorized external effects and health evidence, if any;

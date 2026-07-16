@@ -1,0 +1,166 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/KevinBigham/gpt-5-6-swarm/schema/ledger.schema.json",
+  "title": "Swarm run ledger (schema_version 1)",
+  "description": "Interchange description of the run-local ledger at .swarm/runs/<run-id>/ledger.json. Informational: executable semantic validation (transition legality, dedup, nonces, receipts, scopes, generations) lives in scripts/swarm_ledger.py, which enforces far more than shape.",
+  "type": "object",
+  "required": ["schema_version", "protocol_version", "tool_version", "run_id",
+               "task", "host_capabilities", "created_at", "updated_at",
+               "generation", "nonces", "nodes"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "protocol_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "tool_version": {"type": "string"},
+    "run_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+    "task": {
+      "type": "object",
+      "required": ["type", "description_digest"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {"type": "string"},
+        "description_digest": {"type": "string", "description": "digest or short reference; never the full prompt or secrets"}
+      }
+    },
+    "host_capabilities": {"type": "object", "additionalProperties": {"type": "boolean"}},
+    "created_at": {"type": "string"},
+    "updated_at": {"type": "string"},
+    "generation": {"type": "integer", "minimum": 1},
+    "nonces": {
+      "type": "object",
+      "required": ["launch", "arm"],
+      "additionalProperties": false,
+      "properties": {
+        "launch": {
+          "type": "object",
+          "propertyNames": {"pattern": "^[A-Za-z0-9._-]{8,128}$"},
+          "additionalProperties": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}#[1-9][0-9]*$"}
+        },
+        "arm": {
+          "type": "object",
+          "propertyNames": {"pattern": "^[A-Za-z0-9._-]{8,128}$"},
+          "additionalProperties": {
+            "type": "object",
+            "required": ["node", "spent"],
+            "additionalProperties": false,
+            "properties": {"node": {"type": "string"}, "spent": {"type": "boolean"}}
+          }
+        }
+      }
+    },
+    "nodes": {
+      "type": "object",
+      "propertyNames": {"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}#[1-9][0-9]*$"},
+      "additionalProperties": {"$ref": "#/definitions/node"}
+    }
+  },
+  "definitions": {
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node_id", "attempt", "class", "one_shot", "model",
+                   "effort", "state", "fingerprint", "fingerprint_inputs",
+                   "launch_nonce", "thread_id", "dispatch_issued", "arm",
+                   "resources", "holds_resources", "dependencies", "join",
+                   "receipt", "receipt_sha256", "artifact_disposition",
+                   "reconciliation", "supersedes", "retry_authorization",
+                   "dup_group", "created_at", "last_transition_at", "history"],
+      "properties": {
+        "node_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+        "attempt": {"type": "integer", "minimum": 1},
+        "class": {"enum": ["PURE", "ISOLATED", "KEYED_IDEMPOTENT",
+                           "NON_IDEMPOTENT", "EXCLUSIVE_UNKNOWN", "ONE_SHOT"]},
+        "one_shot": {"type": "boolean"},
+        "model": {"type": "string"},
+        "effort": {"enum": ["none", "low", "medium", "high", "xhigh", "max"]},
+        "state": {"enum": ["PLANNED", "READY", "CLAIMED", "LAUNCHING",
+                           "PREPARING", "ARMED", "RUNNING", "SUCCEEDED",
+                           "FAILED", "CANCELED", "ABORTED", "UNKNOWN",
+                           "CANCELING"]},
+        "fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "fingerprint_inputs": {
+          "type": "object",
+          "required": ["outcome", "base_revision", "inputs_digest",
+                       "write_scope", "gate"],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {"type": "string", "maxLength": 4000},
+            "base_revision": {"type": "string"},
+            "inputs_digest": {"type": "string"},
+            "write_scope": {"type": "array", "items": {"type": "string"}},
+            "gate": {"type": "string", "maxLength": 4000}
+          }
+        },
+        "launch_nonce": {"type": "string", "pattern": "^[A-Za-z0-9._-]{8,128}$"},
+        "thread_id": {"type": ["string", "null"]},
+        "dispatch_issued": {"type": "boolean"},
+        "arm": {
+          "type": "object",
+          "required": ["nonce", "dispatched", "acknowledged", "spent"],
+          "additionalProperties": false,
+          "properties": {
+            "nonce": {"type": ["string", "null"]},
+            "dispatched": {"type": "boolean"},
+            "acknowledged": {"type": "boolean"},
+            "spent": {"type": "boolean"}
+          }
+        },
+        "resources": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "required": ["type", "id", "mode"],
+            "additionalProperties": false,
+            "properties": {
+              "type": {"type": "string"},
+              "id": {"type": "string"},
+              "mode": {"const": "exclusive"}
+            }
+          }
+        },
+        "holds_resources": {"type": "boolean"},
+        "dependencies": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+        "join": {"type": "string", "pattern": "^(all|any|quorum:[1-9][0-9]*)$"},
+        "receipt": {"type": ["object", "null"]},
+        "receipt_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "artifact_disposition": {"enum": ["CURRENT", "INVALIDATED",
+                                          "SUPERSEDED", "REJECTED",
+                                          "INTEGRATED", null]},
+        "reconciliation": {
+          "type": ["object", "null"],
+          "required": ["status", "evidence", "resolved_outcome", "entered_from"],
+          "additionalProperties": false,
+          "properties": {
+            "status": {"enum": ["pending", "resolved"]},
+            "evidence": {"type": "array", "items": {"type": "string"}},
+            "resolved_outcome": {"enum": ["no_delivery_proven",
+                                          "execution_terminal_proven",
+                                          "unresolved", null]},
+            "entered_from": {"type": "string"}
+          }
+        },
+        "supersedes": {"type": ["string", "null"]},
+        "retry_authorization": {"type": ["string", "null"]},
+        "dup_group": {"type": ["string", "null"]},
+        "created_at": {"type": "string"},
+        "last_transition_at": {"type": "string"},
+        "history": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["from", "to", "at"],
+            "additionalProperties": false,
+            "properties": {
+              "from": {"type": ["string", "null"]},
+              "to": {"type": "string"},
+              "at": {"type": "string"},
+              "note": {"type": "string"}
+            }
+          }
+        },
+        "model_warning": {"type": "string"}
+      }
+    }
+  }
+}

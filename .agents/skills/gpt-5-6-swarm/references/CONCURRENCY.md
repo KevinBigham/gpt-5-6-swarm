@@ -2,6 +2,8 @@
 
 Read the sections routed by `SKILL.md`. Read this reference completely before any mutation, command-running validator, background work, shared/external resource, or one-shot action.
 
+Deterministic enforcement: where the host can execute commands, the canonical ledger, launch nonces, action-class retry guards, resource scopes, and the one-shot barrier defined below are enforced by `scripts/swarm_ledger.py` (see `references/ENFORCEMENT.md`). The coordinator remains the only writer of that ledger; workers never mutate it.
+
 ## Action classes
 
 Classify real behavior, not the command's label:

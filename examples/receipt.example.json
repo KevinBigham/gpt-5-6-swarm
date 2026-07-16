@@ -1,0 +1,14 @@
+{
+  "run_id": "example-run", "node_id": "impl", "attempt": 1,
+  "status": "SUCCEEDED", "thread_id": "thread-impl-01",
+  "model_effort": "gpt-5.6-terra/high", "base_revision": "rev-2af1e9c",
+  "artifact": "worktree wt-impl, branch swarm/impl, commit 4b1c2d3",
+  "touched_paths": ["src/api/handlers.py"],
+  "commands": [{"command": "python -m unittest", "exit_code": 0}, {"command": "lint", "exit_code": 0}],
+  "processes": {"spawned": [], "remaining_live": []},
+  "resources_released": ["path:src/api"],
+  "artifact_hashes": {"src/api/handlers.py": "sha256:4ea77e5a4ea77e5a4ea77e5a4ea77e5a4ea77e5a4ea77e5a4ea77e5a4ea77e5a"},
+  "descendant_thread_ids": [], "assumptions": ["recon report reflects rev-2af1e9c"],
+  "unresolved_risks": ["handler timeout default unchanged"],
+  "cleanup_items": []
+}

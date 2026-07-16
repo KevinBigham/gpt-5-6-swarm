@@ -1,0 +1,261 @@
+{
+  "created_at": "2026-07-16T02:27:52.770891+00:00",
+  "generation": 15,
+  "host_capabilities": {
+    "background_sessions": false,
+    "thread_listing": true,
+    "unique_launch_discovery": true
+  },
+  "nodes": {
+    "impl#1": {
+      "arm": {
+        "acknowledged": false,
+        "dispatched": false,
+        "nonce": null,
+        "spent": false
+      },
+      "artifact_disposition": "CURRENT",
+      "attempt": 1,
+      "class": "ISOLATED",
+      "created_at": "2026-07-16T02:28:15.168072+00:00",
+      "dependencies": [
+        "recon"
+      ],
+      "dispatch_issued": true,
+      "dup_group": null,
+      "effort": "high",
+      "fingerprint": "662e6c5e73fe5e5cd827f76cec1f3cbdc55861687d0e358750f07e70f34aa41a",
+      "fingerprint_inputs": {
+        "base_revision": "rev-2af1e9c",
+        "gate": "tests pass in the worktree",
+        "inputs_digest": "none",
+        "outcome": "Implement the API handler changes in an isolated worktree",
+        "write_scope": [
+          "path:src/api"
+        ]
+      },
+      "history": [
+        {
+          "at": "2026-07-16T02:28:15.168080+00:00",
+          "from": null,
+          "note": "created",
+          "to": "PLANNED"
+        },
+        {
+          "at": "2026-07-16T02:28:15.560898+00:00",
+          "from": "PLANNED",
+          "note": "",
+          "to": "READY"
+        },
+        {
+          "at": "2026-07-16T02:28:15.613343+00:00",
+          "from": "READY",
+          "note": "",
+          "to": "CLAIMED"
+        },
+        {
+          "at": "2026-07-16T02:28:15.667241+00:00",
+          "from": "CLAIMED",
+          "note": "",
+          "to": "LAUNCHING"
+        },
+        {
+          "at": "2026-07-16T02:28:15.776687+00:00",
+          "from": "LAUNCHING",
+          "note": "",
+          "to": "RUNNING"
+        },
+        {
+          "at": "2026-07-16T02:28:15.832930+00:00",
+          "from": "RUNNING",
+          "note": "",
+          "to": "SUCCEEDED"
+        }
+      ],
+      "holds_resources": false,
+      "join": "all",
+      "last_transition_at": "2026-07-16T02:28:15.832922+00:00",
+      "launch_nonce": "nonce-impl-0001",
+      "model": "gpt-5.6-terra",
+      "node_id": "impl",
+      "one_shot": false,
+      "receipt": {
+        "artifact": "worktree wt-impl, branch swarm/impl, commit 4b1c2d3",
+        "artifact_hashes": {
+          "src/api/handlers.py": "sha256:4ea77e5a4ea77e5a4ea77e5a4ea77e5a4ea77e5a4ea77e5a4ea77e5a4ea77e5a"
+        },
+        "assumptions": [
+          "recon report reflects rev-2af1e9c"
+        ],
+        "attempt": 1,
+        "base_revision": "rev-2af1e9c",
+        "cleanup_items": [],
+        "commands": [
+          {
+            "command": "python -m unittest",
+            "exit_code": 0
+          },
+          {
+            "command": "lint",
+            "exit_code": 0
+          }
+        ],
+        "descendant_thread_ids": [],
+        "model_effort": "gpt-5.6-terra/high",
+        "node_id": "impl",
+        "processes": {
+          "remaining_live": [],
+          "spawned": []
+        },
+        "resources_released": [
+          "path:src/api"
+        ],
+        "run_id": "example-run",
+        "status": "SUCCEEDED",
+        "thread_id": "thread-impl-01",
+        "touched_paths": [
+          "src/api/handlers.py"
+        ],
+        "unresolved_risks": [
+          "handler timeout default unchanged"
+        ]
+      },
+      "receipt_sha256": "a2193f574c32f0f1648a1d91f77ddf4ab5f5807ecc93006097c466a1bcc2c7d8",
+      "reconciliation": null,
+      "resources": [
+        {
+          "id": "src/api",
+          "mode": "exclusive",
+          "type": "path"
+        }
+      ],
+      "retry_authorization": null,
+      "state": "SUCCEEDED",
+      "supersedes": null,
+      "thread_id": "thread-impl-01"
+    },
+    "recon#1": {
+      "arm": {
+        "acknowledged": false,
+        "dispatched": false,
+        "nonce": null,
+        "spent": false
+      },
+      "artifact_disposition": "CURRENT",
+      "attempt": 1,
+      "class": "PURE",
+      "created_at": "2026-07-16T02:28:15.111910+00:00",
+      "dependencies": [],
+      "dispatch_issued": true,
+      "dup_group": null,
+      "effort": "low",
+      "fingerprint": "bec45365e25a17d9620700a1d1652ca0b55620b4afeeb6b9280d3456b75ca139",
+      "fingerprint_inputs": {
+        "base_revision": "rev-2af1e9c",
+        "gate": "recon report delivered",
+        "inputs_digest": "none",
+        "outcome": "Survey the repository structure and list integration risks",
+        "write_scope": []
+      },
+      "history": [
+        {
+          "at": "2026-07-16T02:28:15.111919+00:00",
+          "from": null,
+          "note": "created",
+          "to": "PLANNED"
+        },
+        {
+          "at": "2026-07-16T02:28:15.227759+00:00",
+          "from": "PLANNED",
+          "note": "",
+          "to": "READY"
+        },
+        {
+          "at": "2026-07-16T02:28:15.283185+00:00",
+          "from": "READY",
+          "note": "",
+          "to": "CLAIMED"
+        },
+        {
+          "at": "2026-07-16T02:28:15.338840+00:00",
+          "from": "CLAIMED",
+          "note": "",
+          "to": "LAUNCHING"
+        },
+        {
+          "at": "2026-07-16T02:28:15.451510+00:00",
+          "from": "LAUNCHING",
+          "note": "",
+          "to": "RUNNING"
+        },
+        {
+          "at": "2026-07-16T02:28:15.506872+00:00",
+          "from": "RUNNING",
+          "note": "",
+          "to": "SUCCEEDED"
+        }
+      ],
+      "holds_resources": false,
+      "join": "all",
+      "last_transition_at": "2026-07-16T02:28:15.506864+00:00",
+      "launch_nonce": "nonce-recon-0001",
+      "model": "gpt-5.6-luna",
+      "node_id": "recon",
+      "one_shot": false,
+      "receipt": {
+        "artifact": "reports/recon-findings.md",
+        "artifact_hashes": {
+          "reports/recon-findings.md": "sha256:1c0ffee01c0ffee01c0ffee01c0ffee01c0ffee01c0ffee01c0ffee01c0ffee0"
+        },
+        "assumptions": [
+          "repo state at rev-2af1e9c"
+        ],
+        "attempt": 1,
+        "base_revision": "rev-2af1e9c",
+        "cleanup_items": [],
+        "commands": [
+          {
+            "command": "read-only survey",
+            "exit_code": 0
+          }
+        ],
+        "descendant_thread_ids": [],
+        "model_effort": "gpt-5.6-luna/low",
+        "node_id": "recon",
+        "processes": {
+          "remaining_live": [],
+          "spawned": []
+        },
+        "resources_released": [],
+        "run_id": "example-run",
+        "status": "SUCCEEDED",
+        "thread_id": "thread-recon-01",
+        "touched_paths": [],
+        "unresolved_risks": []
+      },
+      "receipt_sha256": "2e1b304ed2c4408cc6810d06ad8079c15cb9f548ec5da8e7a3d6f2d84d6c2651",
+      "reconciliation": null,
+      "resources": [],
+      "retry_authorization": null,
+      "state": "SUCCEEDED",
+      "supersedes": null,
+      "thread_id": "thread-recon-01"
+    }
+  },
+  "nonces": {
+    "arm": {},
+    "launch": {
+      "nonce-impl-0001": "impl#1",
+      "nonce-recon-0001": "recon#1"
+    }
+  },
+  "protocol_version": "1.1.0",
+  "run_id": "example-run",
+  "schema_version": 1,
+  "task": {
+    "description_digest": "sha256:demo-task-reference",
+    "type": "build"
+  },
+  "tool_version": "0.1.0",
+  "updated_at": "2026-07-16T02:28:15.833014+00:00"
+}

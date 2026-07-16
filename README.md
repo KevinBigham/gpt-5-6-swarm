@@ -8,14 +8,19 @@ It is designed to make multi-chat work faster without allowing duplicate launche
 
 This is an independent community derivative of [Forward Future's GPT-5.6 Relay](https://github.com/Forward-Future/gpt-5-6-relay). It is not affiliated with or endorsed by Forward Future, Matthew Berman, or OpenAI.
 
-## Requirements
+## Host compatibility
 
-- A Codex environment that supports project skills under `.agents/skills/`.
-- User-visible child-thread listing, creation, reading, and messaging.
-- Explicit model and reasoning-effort controls.
-- Access to GPT-5.6 Sol, Terra, and Luna for the documented routing; the skill may substitute upward where its protocol permits.
+- Minimum: a Codex environment that supports skills plus host-managed subagent
+  creation, accounting, and result collection.
+- Full model-specific routing additionally needs per-child model and effort
+  controls plus access to GPT-5.6 Sol, Terra, and Luna.
+- Guarded retries and one-shot work additionally need unique-launch discovery,
+  thread inspection, cancellation/accounting, and the relevant real resource
+  fences.
+- Deterministic enforcement needs Python 3.9+ and permission to write
+  control-plane state under `.swarm/runs/` (or an explicitly selected root).
 
-If the host lacks the minimum visible-thread controls, the skill reports the proposed graph and stops. If stronger cancellation, isolation, or resource-locking capabilities are unavailable, it narrows to read-only fan-out or serialized work instead of pretending full parallel safety.
+If the host lacks the minimum host-managed subagent controls, the skill reports the proposed graph and continues serially in the coordinator. If stronger cancellation, isolation, or resource-locking capabilities are unavailable, it narrows to read-only fan-out or serialized work instead of pretending full parallel safety.
 
 ## Install
 
@@ -26,16 +31,23 @@ mkdir -p /path/to/project/.agents/skills
 cp -R .agents/skills/gpt-5-6-swarm /path/to/project/.agents/skills/
 ```
 
+Or install it for one user across repositories:
+
+```sh
+mkdir -p ~/.agents/skills
+cp -R .agents/skills/gpt-5-6-swarm ~/.agents/skills/
+```
+
 Invoke it explicitly:
 
 ```text
-Invoke /gpt-5-6-swarm: <task>
+Use $gpt-5-6-swarm to orchestrate: <task>
 ```
 
 Optional conversational controls:
 
 ```text
-Invoke /gpt-5-6-swarm in build mode with workers=6 and parallel=3: <task>
+Use $gpt-5-6-swarm in build mode with workers=6 and parallel=3: <task>
 ```
 
 `workers` is the total worker-node budget. `parallel` is the peak simultaneous worker-node budget. Both exclude an optional proxy coordinator. They are ceilings, not quotas.
@@ -53,6 +65,17 @@ Invoke /gpt-5-6-swarm in build mode with workers=6 and parallel=3: <task>
 - Evidence-bearing handoffs and actual—not planned—route receipts.
 
 The normative protocol is in [SKILL.md](.agents/skills/gpt-5-6-swarm/SKILL.md). Its supporting references cover [concurrency and safety](.agents/skills/gpt-5-6-swarm/references/CONCURRENCY.md), [route templates](.agents/skills/gpt-5-6-swarm/references/ROUTES.md), [reporting](.agents/skills/gpt-5-6-swarm/references/REPORTING.md), and [deployment](.agents/skills/gpt-5-6-swarm/DEPLOYMENT.md).
+
+## Deterministic enforcement (Phase 1)
+
+The protocol's safety-critical control-plane invariants are enforced by a standard-library Python tool, not just prose: a run-local ledger under `.swarm/runs/<run-id>/` (gitignored) with a legal-transition state machine, fingerprint deduplication, launch/arm nonce uniqueness, one-active-owner and resource-scope rules, receipt-gated known terminal outcomes, generation compare-and-set, secure atomic persistence, and fail-closed `UNKNOWN` handling.
+
+```sh
+python3 .agents/skills/gpt-5-6-swarm/scripts/swarm_ledger.py --help
+python3 -m unittest discover -s tests   # offline, deterministic
+```
+
+See [ENFORCEMENT.md](.agents/skills/gpt-5-6-swarm/references/ENFORCEMENT.md) for the lifecycle, scope boundary, exit codes, recovery, and the versioning contract; [SCHEDULING.md](.agents/skills/gpt-5-6-swarm/references/SCHEDULING.md) for bounded concurrency; [HOSTS.md](.agents/skills/gpt-5-6-swarm/references/HOSTS.md) for verified host capabilities versus gated experiments. The prompt-only workflow remains available when command execution or permission for control-plane state writes is absent.
 
 ## Safety model
 

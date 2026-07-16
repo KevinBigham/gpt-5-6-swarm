@@ -87,3 +87,14 @@ Parallelism is limited to snapshot-pinned eligibility and adversarial review. Th
 - `quorum:N`: at least N independent valid results are required, followed by a synthesis/adjudication node.
 
 Use `any` and `quorum` only when lanes are intentionally interchangeable or independently confirmatory. Normal implementation dependencies use `all`.
+
+## Luna long-context routing heuristic
+
+Very large recon inputs can dilute targeted retrieval, and this repository does not yet ship a Luna evaluation baseline. Treat that uncertainty as a reason to measure and route cautiously, not as a threshold or prohibition:
+
+- Estimate each recon lane's input before dispatch. When the input is large enough to risk retrieval dilution, split it into bounded, snapshot-pinned slices, one Luna scout per slice, each briefed with explicit questions and required evidence. Record the chosen slice size as an experimental run parameter until local evals justify a default.
+- The cross-slice synthesis node is Terra, not Luna.
+- If any Luna scout reports low-confidence retrieval, missing evidence, or contradictory quotes, escalate that lane to Terra as a recorded attempt `N+1` (substitute upward, never silently).
+- Whole-corpus "read everything and summarize" lanes over large inputs start on Terra directly; Luna stays on targeted, sliced, or small-context recon where it is fast and cheap.
+
+Peak concurrency for sliced recon still obeys `references/SCHEDULING.md` and the host thread ceiling.
