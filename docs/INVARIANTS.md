@@ -1,6 +1,6 @@
 # Invariant-to-test traceability
 
-This map is the public evidence index for protocol `1.2.0`, schema `1`, and tool `0.2.0`. Test names are stable review handles; GitHub Actions is the execution record. Passing tests demonstrate the tool's recorded-control-plane behavior under the tested conditions. They do not prove that a host, worker, filesystem, or external service honored a recorded claim.
+This map is the public evidence index for protocol `1.3.0`, schema `2`, and tool `0.3.0`. Test names are stable review handles; GitHub Actions is the execution record. Passing tests demonstrate the tool's recorded-control-plane behavior under the tested conditions. Named local artifact bytes are recomputed where specified; tests do not prove host behavior, command execution, undeclared writes, operator identity, or external effects.
 
 | Invariant | Executable mechanism | Primary regression evidence |
 | --- | --- | --- |
@@ -10,15 +10,21 @@ This map is the public evidence index for protocol `1.2.0`, schema `1`, and tool
 | One recorded dispatch per attempt | `op_record_dispatch` and transition guards | `TestAmbiguousCreation`, `TestCli.test_cli_mutation_lifecycle` |
 | One-shot arm nonce is single-use | `op_record_arm_dispatch`, arm transition guards | `TestOneShot.test_one_shot_double_arm_rejected`, `test_ambiguous_arm_delivery_freezes_forever` |
 | One-shot needs target/fresh-output fence evidence | `one_shot_fence` capability gate | `TestOneShot.test_one_shot_requires_declared_fence` |
+| One-shot needs fresh task-bound operator evidence | `validate_one_shot_authorization`, authorization nonce registry | `TestOneShot.test_one_shot_requires_fresh_task_bound_authorization`, `test_authorization_nonce_is_single_use` |
 | One active owner per node/thread | semantic validation and thread-lineage rules | `TestHostile.test_two_owners_rejected`, `test_two_owner_hand_edit_detected_by_validate` |
 | Declared path scopes cannot overlap while held | normalized resource scopes and prefix conflict checks | `TestResources.test_conflicting_resource_scopes`, `TestHardening.test_case_alias_paths_conflict` |
 | Every non-`PURE` node declares a resource | create and semantic validation gates | `TestHardening.test_non_pure_requires_resources` |
 | Generation compare-and-set prevents stale writes | `mutate` generation check and lock directory | `TestGenerations`, `TestProcessConcurrency.test_real_process_generation_race` |
 | Known terminal outcomes require consistent receipts | `validate_receipt` and state-edge receipt gates | `TestReceipts`, `TestHardening.test_out_of_scope_receipt_path_is_rejected` |
+| Path-scoped success requires real matching bytes | `verify_receipt_artifacts`, `verify-artifacts`, transition gate | `TestReceipts.test_artifact_hashes_are_recomputed_not_self_attested`, `test_verify_artifacts_read_only_command_contract` |
 | `UNKNOWN` remains immutable and freezes unsafe work | unresolved-unknown scans and reconciliation rules | `TestAmbiguousCreation`, `TestHardening.test_reconciliation_is_monotonic_and_outcome_compatible` |
 | Future or mixed versions fail closed | protocol/schema checks plus packaged-reference scan | `TestVersioning`, `TestReferenceSet` |
 | Host claims are explicit and surfaced | `capability_profile`, `init`, `show` | `TestCapabilities` and CLI profile assertions |
 | Git HEAD/dirty drift is machine-detected | `capture_git_baseline`, `verify_git_baseline` | `TestGitBaseline` |
+| Relevant ignored-file drift is optionally detected | bounded ignored-byte digest | `TestGitBaseline.test_ignored_content_digest_detects_invisible_drift` |
+| Resource symlink swaps freeze launch | `verify_resource_bindings` at claim/launch | `TestResources.test_symlink_swap_cannot_rebind_claimed_resource` |
+| Both ledger/journal crash windows recover safely | intent/commit WAL classification and repair | `TestAtomicPersistence`, `TestHardening.test_torn_journal_tail_is_safely_auto_repaired` |
+| Resume advice is conservative and state-bound | `doctor` badge/manifest/resume token | `TestDoctor.test_doctor_reports_badge_artifacts_and_resume_token` |
 | Corrupt/adversarial JSON is never accepted as state | bounded no-follow JSON loader and structural validation | `TestCorruption`, `TestHardening` |
 | Atomic replacement preserves prior canonical on write failure | same-directory temp, file fsync, `os.replace`, best-effort parent fsync | `TestRecovery.test_atomic_replace_failure_preserves_canonical`, `test_recovery_interrupted_write` |
 | Runtime ledgers and secrets do not ship | repository hygiene tests and `.gitignore` | `TestRepoHygiene` |
@@ -42,4 +48,3 @@ python3 -m coverage report
 ```
 
 The ledger remains Python-standard-library-only. `coverage` is used only to measure the tests in CI.
-

@@ -1,6 +1,6 @@
 # Host capability matrix
 
-Protocol reference set: `1.2.0`.
+Protocol reference set: `1.3.0`.
 
 Swarm's guarantees are only as real as the host features they stand on.
 This file separates four things that are often blurred: what the protocol
@@ -56,7 +56,7 @@ Verified facts relevant to Swarm:
 | Personal custom agents may be standalone `~/.codex/agents/*.toml` files and project agents `.codex/agents/*.toml`, each with `name`, `description`, and `developer_instructions`; `model` and `model_reasoning_effort` are optional | Codex manual | a verified custom agent can pin model/effort only when the current spawn surface can select that agent; file presence alone is not selection proof |
 | Reasoning efforts are model-dependent and can include `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, and `ultra` | Codex manual | record only an effort supported by the selected model on the current host |
 | This local surface exposes four total concurrency slots including the root, and its spawn call does not expose per-child agent/model/effort selectors or arbitrary child-turn search | current session tool contract | cap the live peak at three here; host-selected routing may occur but is not a pinned model claim; keep the current coordinator when child model/effort cannot be pinned; do not claim nonce discovery unless a separate turn-reading surface proves it |
-| Lifecycle hooks exist with `SubagentStart`/`SubagentStop` events (`features.hooks`) | config reference | future enforcement integration point (Phase 2+), not used in Phase 1 |
+| Lifecycle hooks expose `SubagentStart`/`SubagentStop` metadata (`features.hooks`) | config reference | useful audit signal, but `SubagentStart` currently exposes IDs/type rather than the initial prompt or a trustworthy launch nonce and cannot veto start; therefore no nonce-to-child enforcement adapter is claimed in v0.3 |
 
 ## Tier 3 - optional and experimental (gated, fail closed)
 
@@ -71,7 +71,7 @@ Verified facts relevant to Swarm:
 
 ## Tier 4 - real external fencing (not supplied by Codex)
 
-The ledger can prevent its own duplicate recorded dispatch and reject overlapping declared scopes. It cannot lock an uncooperative Git writer, database row, service, deployment target, or one-shot external effect. Call a run fully fenced only when every relevant writer honors a real lock, transaction, generation token, or target-side idempotency key. No current Codex client feature supplies that guarantee by itself.
+The ledger can prevent its own duplicate recorded dispatch, recheck path bindings before claim/launch, and reject overlapping declared scopes. It cannot lock an uncooperative Git writer, database row, service, deployment target, or one-shot external effect. Call a run fully fenced only when every relevant writer honors a real lock, transaction, generation token, or target-side idempotency key. No current Codex client feature supplies that guarantee by itself. A future host adapter remains blocked until lifecycle data can bind a coordinator-issued launch nonce to the actual child start (and preferably veto a mismatch) without trusting child-authored text.
 
 ## Verification procedure for a new host
 

@@ -1,5 +1,6 @@
 [run]
 source = .agents/skills/gpt-5-6-swarm/scripts
+branch = True
 patch = subprocess
 
 [report]

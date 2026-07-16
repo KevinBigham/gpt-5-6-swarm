@@ -13,6 +13,26 @@ promised.
 - **tool version** - `swarm_ledger.py` build, recorded in every ledger it
   writes.
 
+## protocol 1.3.0 / schema 2 / tool 0.3.0 - Gen-2 evidence binding (2026-07-16)
+
+- Added fresh, task-fingerprint-bound, single-use operator authorization
+  records for `ONE_SHOT`; these records are explicitly not signatures or
+  authenticated identity proof.
+- Added coordinator-side local artifact-byte recomputation, safe in-scope path
+  checks, `verify-artifacts`, and required verification for path-scoped
+  success. External effects remain target-evidence dependent.
+- Added intent/commit write-ahead journaling with automatic repair of both
+  replacement crash windows and safely torn tails.
+- Added optional bounded ignored-file content drift detection, claim/launch
+  path rebinding defense, case-normalized logical resources, and path-aligned
+  fingerprints.
+- Added `doctor` with a recorded-consistency safety badge, capability limits,
+  artifact manifest, ambiguity report, and state-bound resume token.
+- Added the compact coordinator kernel and on-demand reference routing. The
+  host lifecycle adapter remains deferred because current start hooks do not
+  expose a trustworthy launch nonce/prompt or a start veto.
+- Expanded adversarial tests and enabled branch coverage measurement.
+
 ## protocol 1.2.0 / schema 1 / tool 0.2.0 - Audit hardening (2026-07-15)
 
 - Scoped public claims into executable, prompt-instructed, host-gated, and

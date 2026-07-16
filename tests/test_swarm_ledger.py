@@ -7,6 +7,7 @@ No network or live model calls are used.
 
 import importlib.util
 import copy
+import hashlib
 import json
 import os
 import shutil
@@ -16,6 +17,7 @@ import tempfile
 import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -54,13 +56,40 @@ class LedgerHarness(unittest.TestCase):
                model="gpt-5.6-luna", effort="low", gate="report delivered",
                base="rev-abc123", **kw):
         outcome = outcome or f"do the {node_id} work"
+        resources = list(resources)
+        launch_nonce = self.nonce()
+        if klass == "ONE_SHOT" and "one_shot_authorization_file" not in kw:
+            scope_ids = [f"{item['type']}:{item['id']}" for item in
+                         sl.parse_resources(resources, self.dir)]
+            fingerprint = sl.compute_fingerprint(
+                outcome, base, "none", scope_ids, gate)
+            kw["one_shot_authorization_file"] = self.authorization_for(
+                node_id, fingerprint)
         return sl.op_create_node(
             self.dir, self.RUN, "tester", self.gen(),
             node_id=node_id, klass=klass, model=model, effort=effort,
             outcome=outcome, base_revision=base, inputs_digest="none",
-            gate=gate, launch_nonce=self.nonce(),
-            resources=list(resources), dependencies=kw.pop("deps", []),
+            gate=gate, launch_nonce=launch_nonce,
+            resources=resources, dependencies=kw.pop("deps", []),
             join=kw.pop("join", "all"), **kw)
+
+    def authorization_for(self, node_id, fingerprint, **overrides):
+        now = datetime.now(timezone.utc)
+        authorization = {
+            "authorization_version": 1,
+            "operator_id": "test-operator",
+            "run_id": self.RUN,
+            "node_id": node_id,
+            "task_fingerprint": fingerprint,
+            "authorization_nonce": self.nonce(),
+            "issued_at": now.isoformat(),
+            "expires_at": (now + timedelta(minutes=10)).isoformat(),
+        }
+        authorization.update(overrides)
+        path = os.path.join(self.dir, f"authorization-{self._nonce}.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(authorization, fh)
+        return path
 
     def go(self, ref, target, **kw):
         return sl.op_transition(self.dir, self.RUN, "tester", self.gen(),
@@ -76,19 +105,34 @@ class LedgerHarness(unittest.TestCase):
     def receipt_for(self, ref, status="SUCCEEDED", **overrides):
         ledger = sl.load_ledger(self.dir, self.RUN)
         node = ledger["nodes"][ref]
+        path_resources = [r["id"] for r in node["resources"]
+                          if r["type"] == "path"]
+        artifact_hashes = {}
+        touched_paths = []
+        artifact = f"reports/{node['node_id']}.md"
+        if status == "SUCCEEDED" and path_resources:
+            artifact = f"{path_resources[0]}/artifact-{node['node_id']}.txt"
+            artifact_path = os.path.join(self.dir, *artifact.split("/"))
+            os.makedirs(os.path.dirname(artifact_path), exist_ok=True)
+            payload = f"verified artifact for {ref}\n".encode()
+            with open(artifact_path, "wb") as fh:
+                fh.write(payload)
+            artifact_hashes[artifact] = (
+                "sha256:" + hashlib.sha256(payload).hexdigest())
+            touched_paths = [artifact]
         receipt = {
             "run_id": self.RUN, "node_id": node["node_id"],
             "attempt": node["attempt"], "status": status,
             "thread_id": node["thread_id"],
             "model_effort": f"{node['model']}/{node['effort']}",
             "base_revision": node["fingerprint_inputs"]["base_revision"],
-            "artifact": f"reports/{node['node_id']}.md",
-            "touched_paths": [], "commands": [{"command": "pytest",
+            "artifact": artifact,
+            "touched_paths": touched_paths, "commands": [{"command": "pytest",
                                                "exit_code": 0}],
             "processes": {"spawned": [], "remaining_live": []},
             "resources_released": [f"{r['type']}:{r['id']}"
                                    for r in node["resources"]],
-            "artifact_hashes": {}, "descendant_thread_ids": [],
+            "artifact_hashes": artifact_hashes, "descendant_thread_ids": [],
             "assumptions": [], "unresolved_risks": [], "cleanup_items": [],
         }
         receipt.update(overrides)
@@ -98,7 +142,11 @@ class LedgerHarness(unittest.TestCase):
         return path
 
     def succeed(self, ref):
-        self.go(ref, "SUCCEEDED", receipt_file=self.receipt_for(ref))
+        receipt = self.receipt_for(ref)
+        with open(receipt, encoding="utf-8") as fh:
+            hashes = json.load(fh)["artifact_hashes"]
+        self.go(ref, "SUCCEEDED", receipt_file=receipt,
+                verification_worktree=self.dir if hashes else None)
 
     def expect(self, exit_code, fn, *args, **kw):
         with self.assertRaises(sl.LedgerError) as ctx:
@@ -381,6 +429,21 @@ class TestResources(LedgerHarness):
                     resources=["path:src/b", "path:src/a"],
                     model="gpt-5.6-terra", effort="high")
 
+    def test_symlink_swap_cannot_rebind_claimed_resource(self):
+        Path(self.dir, "scope-a").mkdir()
+        Path(self.dir, "scope-b").mkdir()
+        self.create("a", klass="ISOLATED", resources=["path:scope-a"])
+        self.create("b", klass="ISOLATED", resources=["path:scope-b"])
+        self.go("a#1", "READY")
+        self.go("a#1", "CLAIMED")
+        self.go("b#1", "READY")
+        self.go("b#1", "CLAIMED")
+        Path(self.dir, "scope-b").rmdir()
+        os.symlink(Path(self.dir, "scope-a"), Path(self.dir, "scope-b"))
+        err = self.expect(sl.EXIT_AMBIGUOUS, self.go,
+                          "b#1", "LAUNCHING")
+        self.assertIn("binding changed", err.message)
+
     def test_path_traversal_rejected(self):
         self.expect(sl.EXIT_SEMANTIC, self.create, "x",
                     resources=["path:src/../../etc"])
@@ -448,6 +511,50 @@ class TestReceipts(LedgerHarness):
         self.expect(sl.EXIT_SHAPE, self.go, "a#1", "SUCCEEDED",
                     receipt_file=path)
 
+    def test_receipt_scalar_hash_and_path_boundaries(self):
+        self.create("writer", klass="ISOLATED", resources=["path:src/api"],
+                    model="gpt-5.6-terra", effort="high")
+        self.to_running("writer#1")
+        receipt_path = self.receipt_for("writer#1")
+        receipt = json.loads(Path(receipt_path).read_text(encoding="utf-8"))
+        node = sl.load_ledger(self.dir, self.RUN)["nodes"]["writer#1"]
+
+        def rejected(exit_code, change):
+            changed = copy.deepcopy(receipt)
+            change(changed)
+            self.expect(exit_code, sl.validate_receipt, node, changed,
+                        self.RUN, "SUCCEEDED")
+
+        self.expect(sl.EXIT_SHAPE, sl.validate_receipt, node, [],
+                    self.RUN, "SUCCEEDED")
+        rejected(sl.EXIT_SHAPE, lambda d: d.__setitem__("extra", True))
+        rejected(sl.EXIT_SHAPE, lambda d: d.__setitem__("run_id", 7))
+        rejected(sl.EXIT_CORRUPT,
+                 lambda d: d.__setitem__("artifact", "bad\x1b"))
+        rejected(sl.EXIT_SHAPE, lambda d: d.__setitem__("attempt", True))
+        rejected(sl.EXIT_SHAPE, lambda d: d.__setitem__("assumptions", [7]))
+        rejected(sl.EXIT_SHAPE,
+                 lambda d: d.__setitem__("artifact_hashes", []))
+        rejected(sl.EXIT_SEMANTIC, lambda d: d.__setitem__(
+            "artifact_hashes", {"src/api/x": "bad"}))
+        rejected(sl.EXIT_SEMANTIC, lambda d: d.__setitem__(
+            "artifact_hashes", {"src/api/./x": "sha256:" + "0" * 64}))
+        rejected(sl.EXIT_SEMANTIC, lambda d: d.__setitem__("run_id", "other"))
+        rejected(sl.EXIT_SEMANTIC,
+                 lambda d: d.__setitem__("artifact_hashes", {}))
+        rejected(sl.EXIT_SEMANTIC, lambda d: d.__setitem__(
+            "artifact_hashes", {"other/x": "sha256:" + "0" * 64}))
+
+        self.create("reader", outcome="read-only boundary")
+        self.to_running("reader#1")
+        pure_path = self.receipt_for("reader#1")
+        pure = json.loads(Path(pure_path).read_text(encoding="utf-8"))
+        pure["artifact_hashes"] = {
+            "reports/x": "sha256:" + "0" * 64}
+        pure_node = sl.load_ledger(self.dir, self.RUN)["nodes"]["reader#1"]
+        self.expect(sl.EXIT_SEMANTIC, sl.validate_receipt,
+                    pure_node, pure, self.RUN, "SUCCEEDED")
+
     def test_failure_requires_terminal_receipt_and_rejects_live_process(self):
         self.create("a")
         self.to_running("a#1")
@@ -496,6 +603,72 @@ class TestReceipts(LedgerHarness):
         path = self.receipt_for("reader#1", touched_paths=["src/read.txt"])
         self.expect(sl.EXIT_SEMANTIC, self.go, "reader#1", "SUCCEEDED",
                     receipt_file=path)
+
+    def test_artifact_hashes_are_recomputed_not_self_attested(self):
+        self.create("writer", klass="ISOLATED", resources=["path:src/api"],
+                    model="gpt-5.6-terra", effort="high")
+        self.to_running("writer#1")
+        receipt_path = self.receipt_for("writer#1")
+        with open(receipt_path, encoding="utf-8") as fh:
+            receipt = json.load(fh)
+        artifact = next(iter(receipt["artifact_hashes"]))
+        receipt["artifact_hashes"][artifact] = "sha256:" + "0" * 64
+        with open(receipt_path, "w", encoding="utf-8") as fh:
+            json.dump(receipt, fh)
+        err = self.expect(
+            sl.EXIT_AMBIGUOUS, self.go, "writer#1", "SUCCEEDED",
+            receipt_file=receipt_path, verification_worktree=self.dir)
+        self.assertIn("artifact hash mismatch", err.message)
+        self.assertEqual(sl.load_ledger(
+            self.dir, self.RUN)["nodes"]["writer#1"]["state"], "RUNNING")
+
+    def test_verify_artifacts_read_only_command_contract(self):
+        self.create("writer", klass="ISOLATED", resources=["path:src/api"],
+                    model="gpt-5.6-terra", effort="high")
+        self.to_running("writer#1")
+        receipt_path = self.receipt_for("writer#1")
+        before = self.gen()
+        report = sl.op_verify_artifacts(
+            self.dir, self.RUN, "writer#1", receipt_path, self.dir)
+        self.assertEqual(report["status"], "verified")
+        self.assertEqual(self.gen(), before)
+
+    def test_artifact_verification_rejects_missing_root_and_path_aliases(self):
+        self.create("writer", klass="ISOLATED", resources=["path:src/api"],
+                    model="gpt-5.6-terra", effort="high")
+        self.to_running("writer#1")
+        receipt_path = self.receipt_for("writer#1")
+        self.expect(sl.EXIT_SEMANTIC, self.go, "writer#1", "SUCCEEDED",
+                    receipt_file=receipt_path)
+
+        with open(receipt_path, encoding="utf-8") as fh:
+            receipt = json.load(fh)
+        artifact = next(iter(receipt["artifact_hashes"]))
+        absolute = copy.deepcopy(receipt)
+        absolute["artifact_hashes"] = {
+            "/tmp/out": next(iter(receipt["artifact_hashes"].values()))}
+        absolute_path = Path(self.dir, "absolute-receipt.json")
+        absolute_path.write_text(json.dumps(absolute), encoding="utf-8")
+        self.expect(sl.EXIT_SEMANTIC, sl.op_verify_artifacts,
+                    self.dir, self.RUN, "writer#1", str(absolute_path),
+                    self.dir)
+
+        target = Path(self.dir, *artifact.split("/"))
+        external = Path(self.dir, "external-artifact.txt")
+        external.write_bytes(target.read_bytes())
+        target.unlink()
+        try:
+            target.symlink_to(external)
+        except OSError as exc:
+            self.skipTest(f"symlink creation unavailable: {exc}")
+        self.expect(sl.EXIT_AMBIGUOUS, sl.op_verify_artifacts,
+                    self.dir, self.RUN, "writer#1", receipt_path, self.dir)
+
+        pure = copy.deepcopy(receipt)
+        pure["artifact_hashes"] = {}
+        self.expect(sl.EXIT_SEMANTIC, sl.verify_receipt_artifacts,
+                    sl.load_ledger(self.dir, self.RUN)["nodes"]["writer#1"],
+                    pure, self.dir)
 
 
 # ---------------------------------------------------------------------------
@@ -567,6 +740,96 @@ class TestOneShot(LedgerHarness):
                 resources=["db:prod"], dependencies=[], join="all")
         self.assertEqual(ctx.exception.exit_code, sl.EXIT_SEMANTIC)
         self.assertIn("one_shot_fence=true", ctx.exception.message)
+
+    def test_one_shot_requires_fresh_task_bound_authorization(self):
+        outcome = "fire the bounded action"
+        fingerprint = sl.compute_fingerprint(
+            outcome, "rev-abc123", "none", ["db:prod"],
+            "report delivered")
+        self.expect(sl.EXIT_SEMANTIC, sl.op_create_node,
+                    self.dir, self.RUN, "tester", self.gen(),
+                    node_id="missing", klass="ONE_SHOT",
+                    model="gpt-5.6-terra", effort="high", outcome=outcome,
+                    base_revision="rev-abc123", inputs_digest="none",
+                    gate="report delivered", launch_nonce=self.nonce(),
+                    resources=["db:prod"], dependencies=[], join="all")
+        mismatched = self.authorization_for(
+            "shot", "0" * 64)
+        self.expect(sl.EXIT_SEMANTIC, self.create, "shot",
+                    klass="ONE_SHOT", outcome=outcome,
+                    resources=["db:prod"], model="gpt-5.6-terra",
+                    effort="high", one_shot_authorization_file=mismatched)
+        old = datetime.now(timezone.utc) - timedelta(minutes=20)
+        expired = self.authorization_for(
+            "expired", fingerprint,
+            issued_at=old.isoformat(),
+            expires_at=(old + timedelta(minutes=10)).isoformat())
+        self.expect(sl.EXIT_SEMANTIC, self.create, "expired",
+                    klass="ONE_SHOT", outcome=outcome,
+                    resources=["db:prod"], model="gpt-5.6-terra",
+                    effort="high", one_shot_authorization_file=expired)
+
+    def test_authorization_nonce_is_single_use(self):
+        shared = "authority-shared-0001"
+        first_outcome = "first authorized effect"
+        first_fp = sl.compute_fingerprint(
+            first_outcome, "rev-abc123", "none", ["db:prod"],
+            "report delivered")
+        first = self.authorization_for(
+            "first", first_fp, authorization_nonce=shared)
+        self.create("first", klass="ONE_SHOT", outcome=first_outcome,
+                    resources=["db:prod"], model="gpt-5.6-terra",
+                    effort="high", one_shot_authorization_file=first)
+        second_outcome = "second authorized effect"
+        second_fp = sl.compute_fingerprint(
+            second_outcome, "rev-abc123", "none", ["db:other"],
+            "report delivered")
+        second = self.authorization_for(
+            "second", second_fp, authorization_nonce=shared)
+        self.expect(sl.EXIT_SEMANTIC, self.create, "second",
+                    klass="ONE_SHOT", outcome=second_outcome,
+                    resources=["db:other"], model="gpt-5.6-terra",
+                    effort="high", one_shot_authorization_file=second)
+
+    def test_authorization_validator_rejects_shape_and_time_edges(self):
+        now = datetime.now(timezone.utc)
+        fingerprint = "a" * 64
+        base = {
+            "authorization_version": 1,
+            "operator_id": "operator",
+            "run_id": self.RUN,
+            "node_id": "shot",
+            "task_fingerprint": fingerprint,
+            "authorization_nonce": "authority-edge-0001",
+            "issued_at": now.isoformat(),
+            "expires_at": (now + timedelta(minutes=10)).isoformat(),
+        }
+
+        def rejected(exit_code, **changes):
+            value = copy.deepcopy(base)
+            value.update(changes)
+            self.expect(exit_code, sl.validate_one_shot_authorization,
+                        value, run_id=self.RUN, node_id="shot",
+                        fingerprint=fingerprint, now=now)
+
+        self.expect(sl.EXIT_SHAPE, sl.validate_one_shot_authorization,
+                    [], run_id=self.RUN, node_id="shot",
+                    fingerprint=fingerprint, now=now)
+        rejected(sl.EXIT_SHAPE, extra=True)
+        rejected(sl.EXIT_VERSION, authorization_version=True)
+        rejected(sl.EXIT_SHAPE, operator_id="bad id")
+        rejected(sl.EXIT_SEMANTIC, run_id="other")
+        rejected(sl.EXIT_SHAPE, authorization_nonce="short")
+        rejected(sl.EXIT_SHAPE, issued_at=7)
+        rejected(sl.EXIT_SEMANTIC, issued_at="not-a-time")
+        rejected(sl.EXIT_SEMANTIC, issued_at="2026-07-16T10:00:00")
+        rejected(
+            sl.EXIT_SEMANTIC,
+            expires_at=(now + timedelta(minutes=16)).isoformat())
+        rejected(
+            sl.EXIT_SEMANTIC,
+            issued_at=(now + timedelta(minutes=6)).isoformat(),
+            expires_at=(now + timedelta(minutes=10)).isoformat())
 
     def test_one_shot_double_arm_rejected(self):
         self.arm()
@@ -741,6 +1004,31 @@ class TestRecovery(LedgerHarness):
         self.expect(sl.EXIT_USAGE, sl.op_recover, self.dir, self.RUN,
                     clear_lock=True, evidence="already clear")
 
+
+class TestDoctor(LedgerHarness):
+    def test_doctor_reports_badge_artifacts_and_resume_token(self):
+        self.create("reader")
+        self.to_running("reader#1")
+        self.succeed("reader#1")
+        report = sl.op_doctor(self.dir, self.RUN)
+        self.assertIn("RECORDED-CONSISTENCY ONLY", report["safety_badge"])
+        self.assertIn("self-attested", report["capability_evidence"])
+        self.assertTrue(report["resume"]["resumable"])
+        self.assertRegex(report["resume"]["token"], r"^[0-9a-f]{64}$")
+        self.assertEqual(report["artifacts"][0]["verification"],
+                         "unverified-pure-result")
+
+        self.create("uncertain")
+        self.go("uncertain#1", "READY")
+        self.go("uncertain#1", "CLAIMED")
+        self.go("uncertain#1", "LAUNCHING")
+        sl.op_record_dispatch(self.dir, self.RUN, "tester", self.gen(),
+                              "uncertain#1")
+        report = sl.op_doctor(self.dir, self.RUN)
+        self.assertFalse(report["resume"]["resumable"])
+        self.assertIsNone(report["resume"]["token"])
+        self.assertEqual(report["in_flight_ambiguity"][0]["kind"],
+                         "dispatch-unresolved")
 
 # ---------------------------------------------------------------------------
 # Required scenario 15: valid PURE parallel work
@@ -968,6 +1256,93 @@ class TestHardening(LedgerHarness):
         findings = sl.validate_ledger(ledger)
         self.assertEqual(sl.exit_code_for(findings), sl.EXIT_SHAPE)
 
+    def test_schema2_new_field_shape_guards(self):
+        self.create("reader")
+        baseline = sl.load_ledger(self.dir, self.RUN)
+
+        def shape_error(change):
+            changed = copy.deepcopy(baseline)
+            change(changed)
+            findings = sl.validate_ledger_shape(changed)
+            self.assertTrue(findings, change)
+
+        mutations = [
+            lambda d: d["nonces"].pop("authorization"),
+            lambda d: d["nonces"].__setitem__("authorization", []),
+            lambda d: d["nonces"].__setitem__(
+                "authorization", {"bad": "reader#1"}),
+            lambda d: d["nodes"]["reader#1"].pop("artifact_verification"),
+            lambda d: d["nodes"]["reader#1"].pop("one_shot_authorization"),
+            lambda d: d["nodes"]["reader#1"].__setitem__(
+                "artifact_verification", {}),
+            lambda d: d["nodes"]["reader#1"].__setitem__(
+                "one_shot_authorization", {}),
+            lambda d: d["nodes"]["reader#1"].__setitem__("thread_id", 7),
+            lambda d: d["nodes"]["reader#1"].__setitem__(
+                "fingerprint", "bad"),
+            lambda d: d["nodes"]["reader#1"].__setitem__("arm", {}),
+            lambda d: d["nodes"]["reader#1"].__setitem__("resources", {}),
+            lambda d: d["nodes"]["reader#1"].__setitem__(
+                "dependencies", [7]),
+            lambda d: d["nodes"]["reader#1"].__setitem__("join", 7),
+            lambda d: d["nodes"]["reader#1"].__setitem__("receipt", []),
+            lambda d: d["nodes"]["reader#1"].__setitem__(
+                "receipt_sha256", "bad"),
+        ]
+        for mutation in mutations:
+            shape_error(mutation)
+
+    def test_schema2_authorization_and_verification_tamper_guards(self):
+        self.create("shot", klass="ONE_SHOT", resources=["db:prod"],
+                    model="gpt-5.6-terra", effort="high")
+        shot = sl.load_ledger(self.dir, self.RUN)
+        changed = copy.deepcopy(shot)
+        changed["nodes"]["shot#1"]["one_shot_authorization"][
+            "source_sha256"] = "0" * 64
+        self.assertTrue(any(f.code == "E_AUTHORIZATION"
+                            for f in sl.validate_ledger(changed)))
+        changed = copy.deepcopy(shot)
+        changed["nonces"]["authorization"] = {}
+        self.assertTrue(any(f.code == "E_AUTHORIZATION"
+                            for f in sl.validate_ledger(changed)))
+        changed = copy.deepcopy(shot)
+        changed["nodes"]["shot#1"]["one_shot_authorization"][
+            "authorization_version"] = True
+        self.assertEqual(sl.exit_code_for(sl.validate_ledger(changed)),
+                         sl.EXIT_SHAPE)
+        changed = copy.deepcopy(shot)
+        recorded = changed["nodes"]["shot#1"]["one_shot_authorization"]
+        recorded["issued_at"] = "not-a-time"
+        original = {field: recorded.get(field)
+                    for field in sl.REQUIRED_AUTHORIZATION_KEYS}
+        recorded["source_sha256"] = hashlib.sha256(json.dumps(
+            original, sort_keys=True,
+            separators=(",", ":")).encode()).hexdigest()
+        self.assertTrue(any(f.code == "E_AUTHORIZATION"
+                            for f in sl.validate_ledger(changed)))
+
+        other = copy.deepcopy(shot)
+        auth = other["nodes"]["shot#1"]["one_shot_authorization"]
+        other["nodes"]["shot#1"]["one_shot_authorization"] = None
+        other["nonces"]["authorization"] = {}
+        other["nodes"]["shot#1"]["class"] = "ISOLATED"
+        other["nodes"]["shot#1"]["one_shot"] = False
+        other["nodes"]["shot#1"]["one_shot_authorization"] = auth
+        self.assertTrue(any(f.code == "E_AUTHORIZATION"
+                            for f in sl.validate_ledger(other)))
+
+        self.create("writer", klass="ISOLATED", outcome="write artifact",
+                    resources=["path:src/api"], model="gpt-5.6-terra",
+                    effort="high")
+        self.to_running("writer#1")
+        self.succeed("writer#1")
+        succeeded = sl.load_ledger(self.dir, self.RUN)
+        changed = copy.deepcopy(succeeded)
+        changed["nodes"]["writer#1"]["artifact_verification"][
+            "receipt_sha256"] = "0" * 64
+        self.assertTrue(any(f.code == "E_ARTIFACT_VERIFY"
+                            for f in sl.validate_ledger(changed)))
+
     def test_nested_extra_keys_and_history_note_types_are_rejected(self):
         self.create("a")
         ledger = sl.load_ledger(self.dir, self.RUN)
@@ -1173,15 +1548,16 @@ class TestHardening(LedgerHarness):
                     self.dir, self.RUN, accept_current=True,
                     evidence="invalid state must not be trusted", writer="tester")
 
-    def test_torn_journal_is_repaired_only_with_evidence(self):
+    def test_torn_journal_tail_is_safely_auto_repaired(self):
         self.create("a")
         with open(sl.journal_path(self.dir, self.RUN), "ab") as handle:
             handle.write(b'{"partial":')
         _, findings = sl.op_validate(self.dir, self.RUN, check_journal=True)
-        self.assertTrue(any(f.code == "A_JOURNAL_CORRUPT" for f in findings))
-        sl.op_recover(self.dir, self.RUN, accept_current=True,
-                      evidence="torn tail inspected; ledger matches chat mirror",
-                      writer="tester")
+        self.assertTrue(any(f.code == "W_JOURNAL_RECOVERABLE"
+                            for f in findings))
+        _, report = sl.op_recover(self.dir, self.RUN, apply_changes=True,
+                                  writer="tester")
+        self.assertEqual(report["journal"], "anchored")
         self.create("b")
 
     def test_existing_control_character_is_rejected(self):
@@ -1287,6 +1663,50 @@ class TestGitBaseline(unittest.TestCase):
         self.assertEqual(ctx.exception.exit_code, sl.EXIT_AMBIGUOUS)
         self.assertIn("dirty-state", ctx.exception.message)
 
+    def test_ignored_content_digest_detects_invisible_drift(self):
+        Path(self.dir, ".gitignore").write_text("ignored.bin\n", "utf-8")
+        subprocess.run(["git", "add", ".gitignore"], cwd=self.dir,
+                       check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-q", "-m", "ignore fixture"],
+                       cwd=self.dir, check=True, capture_output=True)
+        Path(self.dir, "ignored.bin").write_bytes(b"first")
+        baseline = sl.capture_git_baseline(self.dir, include_ignored=True)
+        self.assertIn("ignored_digest", baseline)
+        self.assertEqual(baseline["ignored_file_count"], 1)
+        Path(self.dir, "ignored.bin").write_bytes(b"second")
+        with self.assertRaises(sl.LedgerError) as ctx:
+            sl.verify_git_baseline(
+                self.dir, baseline["revision"], baseline["dirty_digest"],
+                baseline["ignored_digest"])
+        self.assertEqual(ctx.exception.exit_code, sl.EXIT_AMBIGUOUS)
+        self.assertIn("ignored-content", ctx.exception.message)
+
+    def test_ignored_digest_enforces_cost_bounds_and_hashes_symlinks(self):
+        Path(self.dir, ".gitignore").write_text(
+            "ignored.bin\nignored-link\n", "utf-8")
+        Path(self.dir, "ignored.bin").write_bytes(b"large")
+        original_file = sl.IGNORED_BASELINE_MAX_FILE_BYTES
+        original_total = sl.IGNORED_BASELINE_MAX_TOTAL_BYTES
+        try:
+            sl.IGNORED_BASELINE_MAX_FILE_BYTES = 1
+            with self.assertRaises(sl.LedgerError) as ctx:
+                sl.capture_git_baseline(self.dir, include_ignored=True)
+            self.assertEqual(ctx.exception.exit_code, sl.EXIT_USAGE)
+            sl.IGNORED_BASELINE_MAX_FILE_BYTES = original_file
+            sl.IGNORED_BASELINE_MAX_TOTAL_BYTES = 1
+            with self.assertRaises(sl.LedgerError) as ctx:
+                sl.capture_git_baseline(self.dir, include_ignored=True)
+            self.assertEqual(ctx.exception.exit_code, sl.EXIT_USAGE)
+        finally:
+            sl.IGNORED_BASELINE_MAX_FILE_BYTES = original_file
+            sl.IGNORED_BASELINE_MAX_TOTAL_BYTES = original_total
+        try:
+            os.symlink("tracked.txt", Path(self.dir, "ignored-link"))
+        except OSError as exc:
+            self.skipTest(f"symlink creation unavailable: {exc}")
+        report = sl.capture_git_baseline(self.dir, include_ignored=True)
+        self.assertEqual(report["ignored_file_count"], 2)
+
 
 class TestProcessConcurrency(unittest.TestCase):
     def test_real_process_generation_race(self):
@@ -1339,6 +1759,63 @@ class TestAtomicPersistence(LedgerHarness):
         self.assertFalse(any(path.parent.glob("ledger.json.tmp.*")))
         self.assertNotIn("not-written#1", sl.load_ledger(
             self.dir, self.RUN)["nodes"])
+        _, report = sl.op_recover(self.dir, self.RUN)
+        self.assertIn("recoverable-abort", report["journal"])
+        self.create("after-abort")
+        self.assertIn("after-abort#1", sl.load_ledger(
+            self.dir, self.RUN)["nodes"])
+
+    def test_commit_append_failure_is_completed_on_next_mutation(self):
+        original = sl.journal_append
+        calls = 0
+
+        def fail_commit(root, run_id, entry):
+            nonlocal calls
+            calls += 1
+            if entry.get("phase") == "commit":
+                raise OSError("injected commit append failure")
+            return original(root, run_id, entry)
+
+        sl.journal_append = fail_commit
+        try:
+            with self.assertRaises(OSError):
+                self.create("committed-without-anchor")
+        finally:
+            sl.journal_append = original
+        self.assertEqual(calls, 2)
+        self.assertIn("committed-without-anchor#1", sl.load_ledger(
+            self.dir, self.RUN)["nodes"])
+        _, report = sl.op_recover(self.dir, self.RUN)
+        self.assertIn("recoverable-commit", report["journal"])
+        self.create("after-commit")
+        self.assertEqual(sl.classify_journal(
+            self.dir, self.RUN, sl.load_ledger(
+                self.dir, self.RUN))["status"], "anchored")
+
+    def test_wal_classifier_refuses_malformed_and_unknown_records(self):
+        ledger = sl.load_ledger(self.dir, self.RUN)
+        current = sl._file_sha256(sl.ledger_path(self.dir, self.RUN))
+        sl.journal_append(self.dir, self.RUN, {
+            "phase": "intent", "generation": 2,
+            "snapshot_sha256": current})
+        report = sl.classify_journal(self.dir, self.RUN, ledger)
+        self.assertEqual(report["status"], "mismatch")
+        self.assertIn("malformed", report["reason"])
+
+        sl.journal_append(self.dir, self.RUN, {
+            "phase": "mystery", "generation": 1,
+            "snapshot_sha256": current})
+        report = sl.classify_journal(self.dir, self.RUN, ledger)
+        self.assertIn("unsupported", report["reason"])
+
+        sl.journal_append(self.dir, self.RUN, {
+            "phase": "intent", "base_generation": 1, "generation": 2,
+            "snapshot_sha256": "1" * 64,
+            "intended_snapshot_sha256": "2" * 64})
+        report = sl.classify_journal(self.dir, self.RUN, ledger)
+        self.assertIn("neither side", report["reason"])
+        sl.repair_recoverable_journal(
+            self.dir, self.RUN, ledger, report, "tester")
 
 
 class TestBoundaryErrors(LedgerHarness):
@@ -1351,6 +1828,12 @@ class TestBoundaryErrors(LedgerHarness):
                          sl.EXIT_USAGE), sl.canon_scope_entry, value)
         self.expect(sl.EXIT_USAGE, sl.compute_fingerprint,
                     "outcome", "rev", "not-a-digest", [], "gate")
+        self.expect(sl.EXIT_USAGE, sl._check_text, "", "empty")
+        self.expect(sl.EXIT_SEMANTIC, sl._check_text,
+                    "x" * (sl.MAX_TEXT_FIELD + 1), "long")
+        ledger = sl.load_ledger(self.dir, self.RUN)
+        self.expect(sl.EXIT_USAGE, sl.get_node, ledger, "missing-attempt")
+        self.expect(sl.EXIT_USAGE, sl.get_node, ledger, "missing#1")
         self.expect(sl.EXIT_USAGE, sl.run_dir, self.dir, "bad run id")
         self.expect(sl.EXIT_USAGE, sl.ensure_runtime_directory,
                     self.dir, "bad run id")
@@ -1402,15 +1885,36 @@ class TestBoundaryErrors(LedgerHarness):
         self.assertEqual(ctx.exception.exit_code, sl.EXIT_AMBIGUOUS)
         self.assertIn("revision expected", ctx.exception.message)
 
+    def test_operation_guard_boundaries(self):
+        self.expect(sl.EXIT_USAGE, sl.op_init, self.dir, self.RUN,
+                    "test", "digest", [], "tester")
+        self.expect(sl.EXIT_USAGE, self.create, "reader-auth",
+                    one_shot_authorization_file=__file__)
+        self.create("reader")
+        self.expect(sl.EXIT_USAGE, self.go, "reader#1", "NOT_A_STATE")
+        self.expect(sl.EXIT_SEMANTIC, sl.op_record_dispatch,
+                    self.dir, self.RUN, "tester", self.gen(), "reader#1")
+        self.expect(sl.EXIT_SEMANTIC, sl.op_record_arm_dispatch,
+                    self.dir, self.RUN, "tester", self.gen(), "reader#1")
+        self.expect(sl.EXIT_SEMANTIC, sl.op_release_resources,
+                    self.dir, self.RUN, "tester", self.gen(), "reader#1",
+                    "nothing held")
+        self.expect(sl.EXIT_USAGE, sl.op_reconcile,
+                    self.dir, self.RUN, "tester", self.gen(), "reader#1",
+                    "evidence", "bad-outcome")
+        self.expect(sl.EXIT_USAGE, sl.op_set_disposition,
+                    self.dir, self.RUN, "tester", self.gen(), "reader#1",
+                    "bad-disposition", "evidence")
+
 
 # ---------------------------------------------------------------------------
 # CLI smoke tests (subprocess): exit codes are the machine contract
 # ---------------------------------------------------------------------------
 class TestCli(unittest.TestCase):
-    def run_cli(self, *argv, cwd):
+    def run_cli(self, *argv, cwd, env=None):
         return subprocess.run(
             [sys.executable, str(TOOL_PATH), *argv],
-            cwd=cwd, capture_output=True, text=True, timeout=60)
+            cwd=cwd, capture_output=True, text=True, timeout=60, env=env)
 
     def test_cli_end_to_end(self):
         workdir = tempfile.mkdtemp(prefix="swarm-cli-")
@@ -1490,6 +1994,9 @@ class TestCli(unittest.TestCase):
         out = self.run_cli("show", *run, cwd=workdir)
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertIn("capability tier", out.stdout)
+        out = self.run_cli("doctor", *run, cwd=workdir)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("RECORDED-CONSISTENCY ONLY", out.stdout)
         out = self.run_cli("recover", *run, cwd=workdir)
         self.assertEqual(out.returncode, 0, out.stderr)
 
@@ -1509,6 +2016,36 @@ class TestCli(unittest.TestCase):
             cwd=REPO_ROOT)
         self.assertEqual(out.returncode, 0, out.stderr)
 
+        fixture = tempfile.mkdtemp(prefix="swarm-cli-ignored-")
+        self.addCleanup(shutil.rmtree, fixture, ignore_errors=True)
+        subprocess.run(["git", "init", "-q"], cwd=fixture, check=True)
+        subprocess.run(["git", "config", "user.name", "Swarm Tests"],
+                       cwd=fixture, check=True)
+        subprocess.run(["git", "config", "user.email",
+                        "swarm@example.invalid"], cwd=fixture, check=True)
+        Path(fixture, ".gitignore").write_text(
+            ".coverage*\nignored.bin\n", encoding="utf-8")
+        Path(fixture, "tracked.txt").write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=fixture, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "base"],
+                       cwd=fixture, check=True)
+        Path(fixture, "ignored.bin").write_bytes(b"stable")
+        clean_env = dict(os.environ)
+        clean_env.pop("COVERAGE_PROCESS_START", None)
+        clean_env.pop("COVERAGE_FILE", None)
+        out = self.run_cli(
+            "capture-baseline", "--worktree", fixture, "--include-ignored",
+            cwd=fixture, env=clean_env)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        ignored = json.loads(out.stdout)
+        out = self.run_cli(
+            "verify-baseline", "--worktree", fixture,
+            "--expected-revision", ignored["revision"],
+            "--expected-dirty-digest", ignored["dirty_digest"],
+            "--expected-ignored-digest", ignored["ignored_digest"],
+            cwd=fixture, env=clean_env)
+        self.assertEqual(out.returncode, 0, out.stderr)
+
     def test_cli_one_shot_release_and_reconcile_commands(self):
         workdir = tempfile.mkdtemp(prefix="swarm-cli-guarded-")
         self.addCleanup(shutil.rmtree, workdir, ignore_errors=True)
@@ -1518,6 +2055,21 @@ class TestCli(unittest.TestCase):
             "--capability", "unique_launch_discovery=true",
             "--capability", "one_shot_fence=true", cwd=workdir)
         self.assertEqual(out.returncode, 0, out.stderr)
+
+        fp = sl.compute_fingerprint(
+            "run once", "rev1", "none", ["db:sealed"], "sealed output")
+        now = datetime.now(timezone.utc)
+        authorization_path = Path(workdir, "authorization.json")
+        authorization_path.write_text(json.dumps({
+            "authorization_version": 1,
+            "operator_id": "cli-operator",
+            "run_id": "guarded",
+            "node_id": "shot",
+            "task_fingerprint": fp,
+            "authorization_nonce": "authority-cli-shot-1",
+            "issued_at": now.isoformat(),
+            "expires_at": (now + timedelta(minutes=10)).isoformat(),
+        }), encoding="utf-8")
 
         def generation():
             return str(sl.load_ledger(workdir, "guarded")["generation"])
@@ -1534,6 +2086,7 @@ class TestCli(unittest.TestCase):
             "gpt-5.6-terra", "--effort", "high", "--outcome", "run once",
             "--base-revision", "rev1", "--gate", "sealed output",
             "--launch-nonce", "nonce-cli-shot-1", "--resource", "db:sealed",
+            "--one-shot-authorization", str(authorization_path),
             cwd=workdir)
         self.assertEqual(out.returncode, 0, out.stderr)
         transition("shot#1", "READY")

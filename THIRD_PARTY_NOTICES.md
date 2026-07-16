@@ -34,6 +34,10 @@ Material additions in Swarm include:
 - disjoint worktree/resource ownership and a single integration lease;
 - duplicate-launch recovery, cancellation, drift detection, and unknown-writer handling;
 - two-stage arming for one-shot actions;
+- task-bound one-shot authorization records, local artifact-byte verification,
+  and write-ahead crash recovery;
+- ignored-file drift evidence, path-rebinding defense, and safety/resume doctor
+  reports;
 - task-specific route templates and structured progress/final receipts.
 
 The copyright and license text are preserved to satisfy the upstream MIT License. The additional provenance above is supplied for transparency and to make the project's intellectual lineage clear. Forward Future and Matthew Berman have not endorsed this derivative.

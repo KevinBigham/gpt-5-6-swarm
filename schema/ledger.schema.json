@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://github.com/KevinBigham/gpt-5-6-swarm/schema/ledger.schema.json",
-  "title": "Swarm run ledger (schema_version 1)",
+  "title": "Swarm run ledger (schema_version 2)",
   "description": "Interchange description of the run-local ledger at .swarm/runs/<run-id>/ledger.json. Informational: executable semantic validation (transition legality, dedup, nonces, receipts, declared scopes, generations) lives in scripts/swarm_ledger.py. It enforces consistency of recorded claims, not real host or target behavior.",
   "type": "object",
   "required": ["schema_version", "protocol_version", "tool_version", "run_id",
@@ -9,7 +9,7 @@
                "generation", "nonces", "nodes"],
   "additionalProperties": false,
   "properties": {
-    "schema_version": {"type": "integer", "const": 1},
+    "schema_version": {"type": "integer", "const": 2},
     "protocol_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
     "tool_version": {"type": "string"},
     "run_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
@@ -28,7 +28,7 @@
     "generation": {"type": "integer", "minimum": 1},
     "nonces": {
       "type": "object",
-      "required": ["launch", "arm"],
+      "required": ["launch", "arm", "authorization"],
       "additionalProperties": false,
       "properties": {
         "launch": {
@@ -45,6 +45,11 @@
             "additionalProperties": false,
             "properties": {"node": {"type": "string"}, "spent": {"type": "boolean"}}
           }
+        },
+        "authorization": {
+          "type": "object",
+          "propertyNames": {"pattern": "^[A-Za-z0-9._-]{8,128}$"},
+          "additionalProperties": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}#[1-9][0-9]*$"}
         }
       }
     },
@@ -62,7 +67,8 @@
                    "effort", "state", "fingerprint", "fingerprint_inputs",
                    "launch_nonce", "thread_id", "dispatch_issued", "arm",
                    "resources", "holds_resources", "dependencies", "join",
-                   "receipt", "receipt_sha256", "artifact_disposition",
+                   "receipt", "receipt_sha256", "artifact_verification",
+                   "artifact_disposition", "one_shot_authorization",
                    "reconciliation", "supersedes", "retry_authorization",
                    "dup_group", "created_at", "last_transition_at", "history"],
       "properties": {
@@ -124,9 +130,41 @@
         "join": {"type": "string", "pattern": "^(all|any|quorum:[1-9][0-9]*)$"},
         "receipt": {"type": ["object", "null"]},
         "receipt_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "artifact_verification": {
+          "type": ["object", "null"],
+          "required": ["status", "verified_at", "worktree", "receipt_sha256", "artifact_hashes"],
+          "additionalProperties": false,
+          "properties": {
+            "status": {"const": "verified"},
+            "verified_at": {"type": "string"},
+            "worktree": {"type": "string"},
+            "receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "artifact_hashes": {
+              "type": "object",
+              "additionalProperties": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+            }
+          }
+        },
         "artifact_disposition": {"enum": ["CURRENT", "INVALIDATED",
                                           "SUPERSEDED", "REJECTED",
                                           "INTEGRATED", null]},
+        "one_shot_authorization": {
+          "type": ["object", "null"],
+          "required": ["authorization_version", "operator_id", "run_id", "node_id", "task_fingerprint", "authorization_nonce", "issued_at", "expires_at", "source_sha256", "recorded_at"],
+          "additionalProperties": false,
+          "properties": {
+            "authorization_version": {"type": "integer", "const": 1},
+            "operator_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+            "run_id": {"type": "string"},
+            "node_id": {"type": "string"},
+            "task_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "authorization_nonce": {"type": "string", "pattern": "^[A-Za-z0-9._-]{8,128}$"},
+            "issued_at": {"type": "string"},
+            "expires_at": {"type": "string"},
+            "source_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "recorded_at": {"type": "string"}
+          }
+        },
         "reconciliation": {
           "type": ["object", "null"],
           "required": ["status", "evidence", "resolved_outcome", "entered_from"],

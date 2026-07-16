@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/KevinBigham/gpt-5-6-swarm/schema/one-shot-authorization.schema.json",
+  "title": "Task-bound one-shot operator authorization",
+  "description": "Structured, short-lived operator evidence. This is not a cryptographic signature or authenticated identity proof.",
+  "type": "object",
+  "required": ["authorization_version", "operator_id", "run_id", "node_id", "task_fingerprint", "authorization_nonce", "issued_at", "expires_at"],
+  "additionalProperties": false,
+  "properties": {
+    "authorization_version": {"type": "integer", "const": 1},
+    "operator_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+    "run_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+    "node_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+    "task_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "authorization_nonce": {"type": "string", "pattern": "^[A-Za-z0-9._-]{8,128}$"},
+    "issued_at": {"type": "string"},
+    "expires_at": {"type": "string"}
+  }
+}
