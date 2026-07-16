@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/KevinBigham/gpt-5-6-swarm/schema/frozen-contract.schema.json",
+  "title": "GPT-5.6 Swarm frozen contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "contract_sha256", "contract"],
+  "properties": {
+    "format": {"const": "gpt-5-6-swarm-frozen-contract"},
+    "contract_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract_version", "run_id", "task_digest", "base_revision", "protected_paths", "nodes"],
+      "properties": {
+        "contract_version": {"const": 1},
+        "run_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+        "task_digest": {"type": "string", "minLength": 1},
+        "base_revision": {"type": "string", "minLength": 1},
+        "protected_paths": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "nodes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["node_id", "class", "model", "effort", "outcome", "gate", "dependencies", "join", "resources"],
+            "properties": {
+              "node_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+              "class": {"enum": ["PURE", "ISOLATED", "KEYED_IDEMPOTENT", "NON_IDEMPOTENT", "EXCLUSIVE_UNKNOWN", "ONE_SHOT"]},
+              "model": {"type": "string", "minLength": 1},
+              "effort": {"enum": ["none", "low", "medium", "high", "xhigh", "max"]},
+              "outcome": {"type": "string", "minLength": 1},
+              "gate": {"type": "string", "minLength": 1},
+              "dependencies": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+              "join": {"type": "string", "pattern": "^(all|any|quorum:[1-9][0-9]*)$"},
+              "resources": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}:.+$"}}
+            }
+          }
+        }
+      }
+    }
+  }
+}

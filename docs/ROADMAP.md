@@ -28,7 +28,24 @@ Release gate: all platform jobs and coverage pass; skill validation passes; publ
 Release gate: path-scoped success verifies real bytes; WAL crash cases recover
 without manual re-anchoring; every new invariant has accepting/rejecting tests.
 
-## v0.4.0 - trustworthy host adapter
+## v0.4.0 - evidence, operator tooling, and plugin distribution
+
+- Ship one canonical marketplace/plugin skill tree with preserved provenance.
+- Add eight narrow project-scoped contributor profiles without claiming plugin
+  installation or spawn selection of those profiles.
+- Add optional frozen-contract binding and changed-path ownership audits.
+- Add an escaped offline operator status page.
+- Publish paired benchmark schemas, an offline declared-record diagnostic,
+  anti-selection methodology, and engineering case studies without inventing
+  or authenticating speed evidence.
+- Keep conservative concurrency ceilings unchanged until measured evidence
+  justifies an experiment.
+
+Release gate: plugin and skill validators pass; schemas/examples replay;
+contract and status adversarial tests pass; all platform and coverage jobs pass;
+installation is smoke-tested in a disposable Codex home.
+
+## v0.5.0 - trustworthy host adapter
 
 - Bind spawn, turn-read, nonce discovery, cancellation, and lifecycle evidence
   through a tested host adapter once the host exposes a trustworthy
@@ -44,7 +61,9 @@ prompt/nonce and cannot veto a start; v0.3 therefore makes no such claim.
 
 ## v1.0 - validated public beta exit
 
-- Publish benchmark methodology and break-even data against a serial coordinator.
+- Publish preregistered paired break-even data against `parallel=1` on multiple
+  case families and scales; keep end-to-end serial-coordinator comparisons as a
+  separately labeled confounded track.
 - Validate crash recovery under controlled kill injection and document supported filesystem semantics.
 - Validate Windows and a representative network-filesystem policy (supported with evidence or explicitly refused).
 - Complete an independent source-level audit against a tagged commit.

@@ -1,0 +1,55 @@
+{
+  "contract": {
+    "base_revision": "example-revision",
+    "contract_version": 1,
+    "nodes": [
+      {
+        "class": "ISOLATED",
+        "dependencies": [
+          "scan"
+        ],
+        "effort": "high",
+        "gate": "focused tests pass and a scoped artifact is returned",
+        "join": "all",
+        "model": "gpt-5.6-terra",
+        "node_id": "build",
+        "outcome": "Implement the accepted design in an isolated worktree",
+        "resources": [
+          "path:src"
+        ]
+      },
+      {
+        "class": "PURE",
+        "dependencies": [],
+        "effort": "low",
+        "gate": "evidence report identifies interfaces and risks",
+        "join": "all",
+        "model": "gpt-5.6-luna",
+        "node_id": "scan",
+        "outcome": "Map the implementation boundary",
+        "resources": []
+      },
+      {
+        "class": "PURE",
+        "dependencies": [
+          "build"
+        ],
+        "effort": "high",
+        "gate": "independent review reports no blocking finding",
+        "join": "all",
+        "model": "gpt-5.6-terra",
+        "node_id": "verify",
+        "outcome": "Review the integrated artifact against the gate",
+        "resources": []
+      }
+    ],
+    "protected_paths": [
+      ".git",
+      ".swarm/runs"
+    ],
+    "run_id": "example-run",
+    "task_digest": "sha256:example-task-digest"
+  },
+  "contract_sha256": "d6f52db312dca966fd3d578351659408969a846166ca0047218b3d96b86a6e63",
+  "format": "gpt-5-6-swarm-frozen-contract"
+}

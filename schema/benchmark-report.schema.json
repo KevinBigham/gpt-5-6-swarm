@@ -1,0 +1,195 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/KevinBigham/gpt-5-6-swarm/schema/benchmark-report.schema.json",
+  "title": "GPT-5.6 Swarm declared-data benchmark diagnostic",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "benchmark_report_version", "case_sha256", "track", "evidence_status",
+    "summary_status", "planned_measured_pairs", "eligible_pairs",
+    "ineligible_pairs", "arm_counts", "declared_median_paired_speedup",
+    "declared_median_paired_savings_ns", "wins_ties_losses",
+    "observed_peak_coverage", "usage_coverage", "evidence_coverage",
+    "break_even_status", "warnings"
+  ],
+  "properties": {
+    "benchmark_report_version": {"const": 1},
+    "case_sha256": {"$ref": "#/$defs/sha256"},
+    "track": {"enum": ["fixed_graph_scheduling", "end_to_end_workflow"]},
+    "evidence_status": {"const": "declared_hashes_unverified"},
+    "summary_status": {
+      "enum": ["complete_declared_data", "withheld_incomplete_or_ineligible"]
+    },
+    "planned_measured_pairs": {"type": "integer", "minimum": 1},
+    "eligible_pairs": {"type": "array", "items": {"$ref": "#/$defs/eligiblePair"}},
+    "ineligible_pairs": {"type": "array", "items": {"$ref": "#/$defs/ineligiblePair"}},
+    "arm_counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["serial", "swarm"],
+      "properties": {
+        "serial": {"$ref": "#/$defs/armCount"},
+        "swarm": {"$ref": "#/$defs/armCount"}
+      }
+    },
+    "declared_median_paired_speedup": {
+      "anyOf": [{"type": "number", "exclusiveMinimum": 0}, {"type": "null"}]
+    },
+    "declared_median_paired_savings_ns": {
+      "anyOf": [{"type": "number"}, {"type": "null"}]
+    },
+    "wins_ties_losses": {"$ref": "#/$defs/winsTiesLosses"},
+    "observed_peak_coverage": {"$ref": "#/$defs/declaredCoverage"},
+    "usage_coverage": {"$ref": "#/$defs/usageCoverage"},
+    "evidence_coverage": {"$ref": "#/$defs/evidenceCoverage"},
+    "break_even_status": {"const": "insufficient_evidence"},
+    "warnings": {
+      "type": "array", "minItems": 1,
+      "items": {"type": "string", "minLength": 1}
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ledger", "journal", "doctor", "gate_log", "timing"],
+      "properties": {
+        "ledger": {"$ref": "#/$defs/sha256"},
+        "journal": {"$ref": "#/$defs/sha256"},
+        "doctor": {"$ref": "#/$defs/sha256"},
+        "gate_log": {"$ref": "#/$defs/sha256"},
+        "timing": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "armRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "trial_id", "terminal_status", "acceptance_passed", "duration_ns",
+        "exclusion_reason", "unknowns", "retries", "scheduler_issued_peak",
+        "observed_peak", "evidence"
+      ],
+      "properties": {
+        "trial_id": {"$ref": "#/$defs/id"},
+        "terminal_status": {"enum": ["SUCCEEDED", "FAILED", "ABORTED", "CANCELED", "UNKNOWN"]},
+        "acceptance_passed": {"type": "boolean"},
+        "duration_ns": {"type": "integer", "minimum": 1},
+        "exclusion_reason": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "unknowns": {"type": "integer", "minimum": 0},
+        "retries": {"type": "integer", "minimum": 0},
+        "scheduler_issued_peak": {"type": "integer", "minimum": 0},
+        "observed_peak": {"anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]},
+        "evidence": {"$ref": "#/$defs/evidence"}
+      }
+    },
+    "eligiblePair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pair_id", "replicate", "order", "serial_trial_id", "swarm_trial_id",
+        "serial_duration_ns", "swarm_duration_ns", "savings_ns", "declared_ratio"
+      ],
+      "properties": {
+        "pair_id": {"$ref": "#/$defs/id"},
+        "replicate": {"type": "integer", "minimum": 1},
+        "order": {"enum": ["AB", "BA"]},
+        "serial_trial_id": {"$ref": "#/$defs/id"},
+        "swarm_trial_id": {"$ref": "#/$defs/id"},
+        "serial_duration_ns": {"type": "integer", "minimum": 1},
+        "swarm_duration_ns": {"type": "integer", "minimum": 1},
+        "savings_ns": {"type": "integer"},
+        "declared_ratio": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "ineligiblePair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pair_id", "replicate", "order", "warmup", "reason", "arms"],
+      "properties": {
+        "pair_id": {"$ref": "#/$defs/id"},
+        "replicate": {"type": "integer", "minimum": 1},
+        "order": {"enum": ["AB", "BA"]},
+        "warmup": {"type": "boolean"},
+        "reason": {
+          "enum": [
+            "missing arm", "warmup", "host profile mismatch", "routing mismatch",
+            "gate mismatch", "non-success terminal state", "acceptance failure",
+            "preregistered exclusion"
+          ]
+        },
+        "arms": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["serial", "swarm"],
+          "properties": {
+            "serial": {"anyOf": [{"$ref": "#/$defs/armRecord"}, {"type": "null"}]},
+            "swarm": {"anyOf": [{"$ref": "#/$defs/armRecord"}, {"type": "null"}]}
+          }
+        }
+      }
+    },
+    "armCount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "passed", "terminal_statuses"],
+      "properties": {
+        "total": {"type": "integer", "minimum": 0},
+        "passed": {"type": "integer", "minimum": 0},
+        "terminal_statuses": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["SUCCEEDED", "FAILED", "ABORTED", "CANCELED", "UNKNOWN"],
+          "properties": {
+            "SUCCEEDED": {"type": "integer", "minimum": 0},
+            "FAILED": {"type": "integer", "minimum": 0},
+            "ABORTED": {"type": "integer", "minimum": 0},
+            "CANCELED": {"type": "integer", "minimum": 0},
+            "UNKNOWN": {"type": "integer", "minimum": 0}
+          }
+        }
+      }
+    },
+    "winsTiesLosses": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["wins", "ties", "losses"],
+      "properties": {
+        "wins": {"type": "integer", "minimum": 0},
+        "ties": {"type": "integer", "minimum": 0},
+        "losses": {"type": "integer", "minimum": 0}
+      }
+    },
+    "declaredCoverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["declared_known", "total_submitted"],
+      "properties": {
+        "declared_known": {"type": "integer", "minimum": 0},
+        "total_submitted": {"type": "integer", "minimum": 0}
+      }
+    },
+    "usageCoverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["input_tokens_declared", "output_tokens_declared", "credits_declared", "total_submitted"],
+      "properties": {
+        "input_tokens_declared": {"type": "integer", "minimum": 0},
+        "output_tokens_declared": {"type": "integer", "minimum": 0},
+        "credits_declared": {"type": "integer", "minimum": 0},
+        "total_submitted": {"type": "integer", "minimum": 0}
+      }
+    },
+    "evidenceCoverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["declared_hashes", "content_verified", "total_expected"],
+      "properties": {
+        "declared_hashes": {"type": "integer", "minimum": 0},
+        "content_verified": {"const": 0},
+        "total_expected": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

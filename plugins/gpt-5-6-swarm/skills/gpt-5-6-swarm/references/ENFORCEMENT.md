@@ -1,6 +1,6 @@
 # Deterministic recorded-control-plane enforcement
 
-Protocol reference set: `1.3.0`.
+Protocol reference set: `1.4.0`.
 
 The enforcement layer turns represented safety-critical control-plane invariants from prose
 the coordinator must remember into checks a program refuses to violate. The
@@ -44,6 +44,13 @@ Enforced deterministically (the tool fails closed):
   non-regular ledger/receipt files
 - optional bounded hashing detects ignored-file content drift; `doctor`
   reports a recorded-consistency badge, artifacts, ambiguity, and resume token
+- optional frozen contracts reject node-field, dependency, route, base, and
+  ownership drift before `create-node`; one immutable sidecar and its journal
+  record bind the whole run before its first node, while the digest also enters
+  each node's existing task fingerprint
+- `render-status` escapes all ledger text into a dependency-free static HTML
+  operator view and exposes unsafe journal state; it adds visibility, not
+  live-host observation
 
 Still protocol guidance (judgment the coordinator owns): route selection,
 model/effort choice within the whitelist, semantic (paraphrase-level)
@@ -120,6 +127,7 @@ python3 "$T" transition --run-id run-01 --expect-generation 7 recon#1 SUCCEEDED 
 python3 "$T" validate --run-id run-01        # read-only, any time
 python3 "$T" show --run-id run-01            # compact run table
 python3 "$T" doctor --run-id run-01          # safety/resume report
+python3 "$T" render-status --run-id run-01   # escaped offline HTML on stdout
 
 # Git baseline evidence before a mutation or integration gate
 python3 "$T" capture-baseline --worktree /absolute/path/to/worktree \
@@ -153,7 +161,7 @@ exactly once, and `RUNNING` requires acknowledged delivery
 | `verify-reference-set` | no | fail if packaged normative document versions are missing or mixed |
 | `capture-baseline` | no | report Git HEAD/dirty digest; optionally bounded ignored-file bytes |
 | `verify-baseline` | no | exit 7 when captured Git/ignored evidence drifted |
-| `create-node` | yes | add a `PLANNED` node (dedup, nonce, class, scope checks) |
+| `create-node` | yes | add a `PLANNED` node (dedup, nonce, class, scope checks; optional frozen-contract binding) |
 | `transition` | yes | apply one allowed state change with required evidence |
 | `verify-artifacts` | no | recompute receipt hashes from safe in-scope local files |
 | `record-dispatch` | yes | record that the thread-create call was issued |
@@ -165,6 +173,12 @@ exactly once, and `RUNNING` requires acknowledged delivery
 | `recover` | no* | crash-artifact report; `--apply` removes temp orphans only |
 | `show` | no | compact human-readable run table |
 | `doctor` | no | safety badge, capability limits, artifacts, ambiguity, resume token |
+| `render-status` | no by default | escaped offline HTML; `--output` atomically replaces one exact regular file |
+
+`scripts/swarm_contract.py` is a separate optional preflight/audit tool. It
+freezes exact graph ownership and lets `create-node --frozen-contract` bind a
+verified contract digest without changing ledger schema 2. See
+`references/CONTRACTS.md`.
 
 *`recover` mutates only with explicit flags (`--apply`, `--clear-lock`,
 `--accept-current`), each scoped to exactly one recovery action.
@@ -267,7 +281,7 @@ supports before declaring it.
 Three independent version fields travel in every ledger, and one reference-set
 stamp travels in every normative skill document:
 
-- `protocol_version` and the packaged reference set (currently `1.3.0`) - the prose protocol. MAJOR
+- `protocol_version` and the packaged reference set (currently `1.4.0`) - the prose protocol. MAJOR
   changes alter invariant semantics; MINOR changes add guidance or
   enforcement without weakening an existing invariant; PATCH is editorial.
   The prompt-only protocol as published at the base commit is retroactively
@@ -275,13 +289,17 @@ stamp travels in every normative skill document:
   gating, capability truth, Git-baseline evidence, one-shot fence gating, and
   the untrusted-artifact boundary. `1.3.0` adds task-bound one-shot authority,
   verified local artifact bytes, WAL recovery, ignored-file drift evidence,
-  path-rebinding defense, and `doctor`. Tool `0.3.x` accepts protocol `1.3.x` and
+  path-rebinding defense, and `doctor`. `1.4.0` adds optional frozen-contract
+  run-wide frozen-contract binding, escaped operator/journal status,
+  declared-record benchmark guidance, and marketplace packaging without
+  weakening existing concurrency ceilings.
+  Tool `0.4.x` accepts protocol `1.4.x` and
   refuses other major/minor series. `verify-reference-set` and `init` require
   an exact stamp in every packaged normative document.
 - `schema_version` (currently `2`, an integer) - the ledger document shape.
   The tool refuses any version outside its supported set with exit 6 and
   mutates nothing. There is no silent up- or down-conversion.
-- `tool_version` (currently `0.3.0`) - the validator build that last wrote
+- `tool_version` (currently `0.4.0`) - the validator build that last wrote
   the ledger, recorded for forensics.
 
 This section *is* the compatibility contract: nothing beyond it is promised.
@@ -290,6 +308,6 @@ This section *is* the compatibility contract: nothing beyond it is promised.
 
 Existing prompt-only usage remains available. Deterministic enforcement
 engages only where the host can run commands and control-plane state writes
-are permitted; `.swarm/` appears only after `init`. Installing the skill is
-still copying the `gpt-5-6-swarm` folder; the `scripts/` subfolder rides along
-as inert content on hosts that cannot or must not execute it.
+are permitted; `.swarm/` appears only after `init`. The marketplace plugin
+installs the complete `gpt-5-6-swarm` skill; its `scripts/` subfolder rides
+along as inert content on hosts that cannot or must not execute it.

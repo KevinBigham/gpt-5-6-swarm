@@ -21,12 +21,17 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-TOOL_PATH = (REPO_ROOT / ".agents" / "skills" / "gpt-5-6-swarm" / "scripts" /
-             "swarm_ledger.py")
+TOOL_PATH = (REPO_ROOT / "plugins" / "gpt-5-6-swarm" / "skills" /
+             "gpt-5-6-swarm" / "scripts" / "swarm_ledger.py")
+CONTRACT_TOOL_PATH = TOOL_PATH.with_name("swarm_contract.py")
 
 spec = importlib.util.spec_from_file_location("swarm_ledger", TOOL_PATH)
 sl = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sl)
+contract_spec = importlib.util.spec_from_file_location(
+    "swarm_contract_for_ledger", CONTRACT_TOOL_PATH)
+sc = importlib.util.module_from_spec(contract_spec)
+contract_spec.loader.exec_module(sc)
 
 
 class LedgerHarness(unittest.TestCase):
@@ -1030,6 +1035,135 @@ class TestDoctor(LedgerHarness):
         self.assertEqual(report["in_flight_ambiguity"][0]["kind"],
                          "dispatch-unresolved")
 
+    def test_status_html_is_escaped_deterministic_and_atomic(self):
+        self.create("reader", outcome="Inspect <script>alert(1)</script>",
+                    gate="return A&B evidence")
+        ledger = sl.load_ledger(self.dir, self.RUN)
+        report = sl.op_doctor(self.dir, self.RUN)
+        first = sl.render_status_html(ledger, report)
+        second = sl.render_status_html(ledger, report)
+        self.assertEqual(first, second)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", first)
+        self.assertNotIn("<script>alert(1)</script>", first)
+        self.assertIn("A&amp;B evidence", first)
+        self.assertIn("does not observe live host threads", first)
+
+        output = os.path.join(self.dir, "status.html")
+        sl.write_status_html(output, first)
+        with open(output, encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), first)
+        self.expect(sl.EXIT_USAGE, sl.write_status_html,
+                    os.path.join(self.dir, "missing", "status.html"), first)
+        os.remove(sl.journal_path(self.dir, self.RUN))
+        unsafe_report = sl.op_doctor(self.dir, self.RUN)
+        unsafe_html = sl.render_status_html(
+            sl.load_ledger(self.dir, self.RUN), unsafe_report)
+        self.assertIn("JOURNAL AMBIGUITY", unsafe_html)
+        self.assertIn("Status: <strong>absent</strong>", unsafe_html)
+        self.assertNotIn("No recorded violations or ambiguity", unsafe_html)
+        link = os.path.join(self.dir, "status-link.html")
+        try:
+            os.symlink(output, link)
+        except OSError:
+            return
+        self.expect(sl.EXIT_CORRUPT, sl.write_status_html, link, first)
+
+
+class TestFrozenContractBinding(LedgerHarness):
+    def test_create_node_binds_exact_frozen_contract_digest(self):
+        common = {
+            "class": "PURE", "model": "gpt-5.6-luna", "effort": "low",
+            "dependencies": [], "join": "all", "resources": [],
+        }
+        contract = {
+            "contract_version": 1, "run_id": self.RUN,
+            "task_digest": "digest-of-task", "base_revision": "rev-contract",
+            "protected_paths": [".git"],
+            "nodes": [
+                dict(common, node_id="contract.other", outcome="other work",
+                     gate="other gate"),
+                dict(common, node_id="contract.scan", outcome="scan exactly",
+                     gate="exact evidence"),
+            ],
+        }
+        envelope = sc.freeze_contract(contract)
+        path = os.path.join(self.dir, "frozen-contract.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(envelope, handle)
+        self.create("contract.scan", outcome="scan exactly",
+                    gate="exact evidence", base="rev-contract",
+                    frozen_contract_file=path)
+        node = sl.load_ledger(self.dir, self.RUN)["nodes"]["contract.scan#1"]
+        self.assertEqual(node["fingerprint_inputs"]["inputs_digest"],
+                         envelope["contract_sha256"])
+        binding = sl.safe_load_json(
+            sl.frozen_contract_binding_path(self.dir, self.RUN),
+            sl.FROZEN_BINDING_MAX_BYTES)
+        self.assertEqual(binding["contract_sha256"],
+                         envelope["contract_sha256"])
+        err = self.expect(
+            sl.EXIT_SEMANTIC, self.create, "contract.other",
+            outcome="other work", gate="changed gate", base="rev-contract",
+            frozen_contract_file=path)
+        self.assertIn("frozen contract refused node", err.message)
+
+        mixed_contract = copy.deepcopy(contract)
+        mixed_contract["nodes"][1]["outcome"] = "different scan plan"
+        mixed_envelope = sc.freeze_contract(mixed_contract)
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(mixed_envelope, handle)
+        err = self.expect(
+            sl.EXIT_SEMANTIC, self.create, "contract.other",
+            outcome="other work", gate="other gate", base="rev-contract",
+            frozen_contract_file=path)
+        self.assertIn("differs from the contract already bound", err.message)
+
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(envelope, handle)
+        self.create("contract.other", outcome="other work", gate="other gate",
+                    base="rev-contract", frozen_contract_file=path)
+        err = self.expect(sl.EXIT_SEMANTIC, self.create, "unbound.after",
+                          outcome="unbound work")
+        self.assertIn("every node must supply", err.message)
+
+        wrong_run = copy.deepcopy(envelope)
+        wrong_run["contract"]["run_id"] = "different-run"
+        wrong_run = sc.freeze_contract(wrong_run["contract"])
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(wrong_run, handle)
+        err = self.expect(
+            sl.EXIT_SEMANTIC, self.create, "contract.other",
+            outcome="other work", gate="other gate", base="rev-contract",
+            frozen_contract_file=path)
+        self.assertIn("run_id does not match contract", err.message)
+
+        os.remove(sl.frozen_contract_binding_path(self.dir, self.RUN))
+        err = self.expect(sl.EXIT_CORRUPT, self.create, "after.deletion",
+                          outcome="must fail closed")
+        self.assertIn("sidecar was removed", err.message)
+
+    def test_contract_mode_cannot_start_after_an_unbound_node(self):
+        self.create("plain.first", outcome="plain work")
+        contract = {
+            "contract_version": 1, "run_id": self.RUN,
+            "task_digest": "digest-of-task", "base_revision": "rev-contract",
+            "protected_paths": [".git"],
+            "nodes": [{
+                "node_id": "bound.late", "class": "PURE",
+                "model": "gpt-5.6-luna", "effort": "low",
+                "outcome": "late bound work", "gate": "report delivered",
+                "dependencies": [], "join": "all", "resources": [],
+            }],
+        }
+        path = os.path.join(self.dir, "late-contract.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(sc.freeze_contract(contract), handle)
+        err = self.expect(
+            sl.EXIT_SEMANTIC, self.create, "bound.late",
+            outcome="late bound work", base="rev-contract",
+            frozen_contract_file=path)
+        self.assertIn("first node", err.message)
+
 # ---------------------------------------------------------------------------
 # Required scenario 15: valid PURE parallel work
 # ---------------------------------------------------------------------------
@@ -1997,6 +2131,15 @@ class TestCli(unittest.TestCase):
         out = self.run_cli("doctor", *run, cwd=workdir)
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertIn("RECORDED-CONSISTENCY ONLY", out.stdout)
+        out = self.run_cli("render-status", *run, cwd=workdir)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("<!doctype html>", out.stdout)
+        status_path = os.path.join(workdir, "status.html")
+        out = self.run_cli("render-status", *run, "--output", status_path,
+                           cwd=workdir)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertTrue(Path(status_path).read_text("utf-8").startswith(
+            "<!doctype html>"))
         out = self.run_cli("recover", *run, cwd=workdir)
         self.assertEqual(out.returncode, 0, out.stderr)
 

@@ -75,30 +75,25 @@ If the host lacks the minimum host-managed subagent controls, the skill reports 
 
 ## Install
 
-Copy the skill into a Codex project:
+This repository is a Codex marketplace with one canonical plugin skill. From a
+local clone:
 
 ```sh
-mkdir -p /path/to/project/.agents/skills
-cp -R .agents/skills/gpt-5-6-swarm /path/to/project/.agents/skills/
+codex plugin marketplace add /absolute/path/to/gpt-5-6-swarm
+codex plugin add gpt-5-6-swarm@gpt-5-6-swarm
 ```
 
-Also ensure the target repository ignores `.swarm/runs/`; runtime ledgers and
-journals must never be committed. `capture-baseline` excludes this exact
-control-plane path from its dirty-state digest even when the target ignore file
-has not yet been updated.
-
-Or install it for one user across repositories:
+After the v0.4.0 tag is actually published, a reproducible Git install is:
 
 ```sh
-mkdir -p ~/.agents/skills
-cp -R .agents/skills/gpt-5-6-swarm ~/.agents/skills/
+codex plugin marketplace add KevinBigham/gpt-5-6-swarm --ref v0.4.0
+codex plugin add gpt-5-6-swarm@gpt-5-6-swarm
 ```
 
-The current Codex manual's user-skill location is `~/.agents/skills`. Some
-Codex-managed creator/installer flows may use `$CODEX_HOME/skills` (commonly
-`~/.codex/skills`). If the skill is already visible there, do not install a
-second copy: duplicate skill names can both appear in selectors instead of
-being merged.
+Start a new Codex task after installation. Also ensure the target repository
+ignores `.swarm/runs/`; runtime ledgers and journals must never be committed.
+`capture-baseline` excludes that exact path from its dirty-state digest even
+before the target ignore file is updated. See the [plugin and profile guide](docs/PLUGIN.md).
 
 Invoke it explicitly:
 
@@ -271,22 +266,44 @@ the route, runs serially, or stops.
 - Capability-based fallback to read-only fan-out or serialized work.
 - Fail-closed handling for unknown writers, stalled workers, cancellation, external effects, and one-shot science.
 - Evidence-bearing handoffs and actual—not planned—route receipts.
+- An optional frozen-contract gate that binds exact node fields and ownership
+  into the existing task fingerprint without changing ledger schema 2.
+- An escaped, dependency-free `render-status` HTML view for operators.
+- A preregistered paired-benchmark declared-record format, deterministic
+  anti-selection diagnostic, and honest case-study publication template.
+- Eight narrow project-scoped specialist profiles for contributors; the plugin
+  format does not install or prove selection of those profiles.
 
-The normative protocol is in [SKILL.md](.agents/skills/gpt-5-6-swarm/SKILL.md). Its supporting references cover [concurrency and safety](.agents/skills/gpt-5-6-swarm/references/CONCURRENCY.md), [route templates](.agents/skills/gpt-5-6-swarm/references/ROUTES.md), [reporting](.agents/skills/gpt-5-6-swarm/references/REPORTING.md), and [deployment](.agents/skills/gpt-5-6-swarm/DEPLOYMENT.md).
+The normative protocol is in [SKILL.md](plugins/gpt-5-6-swarm/skills/gpt-5-6-swarm/SKILL.md). Its supporting references cover [concurrency and safety](plugins/gpt-5-6-swarm/skills/gpt-5-6-swarm/references/CONCURRENCY.md), [route templates](plugins/gpt-5-6-swarm/skills/gpt-5-6-swarm/references/ROUTES.md), [reporting](plugins/gpt-5-6-swarm/skills/gpt-5-6-swarm/references/REPORTING.md), and [deployment](plugins/gpt-5-6-swarm/skills/gpt-5-6-swarm/DEPLOYMENT.md).
 
 ## Deterministic enforcement evidence
 
 The protocol's represented safety-critical control-plane invariants are enforced by a standard-library Python runtime tool, not just prose: a run-local ledger under `.swarm/runs/<run-id>/` (gitignored) with a legal-transition state machine, fingerprint deduplication, launch/arm/authorization nonce uniqueness, one-active-owner and re-resolved resource-scope rules, receipt-gated outcomes, local artifact-byte recomputation, generation compare-and-set, write-ahead recovery, protocol-reference compatibility, and fail-closed `UNKNOWN` handling.
 
 ```sh
-python3 .agents/skills/gpt-5-6-swarm/scripts/swarm_ledger.py --help
+python3 plugins/gpt-5-6-swarm/skills/gpt-5-6-swarm/scripts/swarm_ledger.py --help
 python3 -m unittest discover -s tests   # offline, deterministic
-python3 .agents/skills/gpt-5-6-swarm/scripts/swarm_ledger.py verify-reference-set
+python3 plugins/gpt-5-6-swarm/skills/gpt-5-6-swarm/scripts/swarm_ledger.py verify-reference-set
 ```
 
-CI runs the offline suite across Python 3.9/3.11/3.13 on Ubuntu, Python 3.11 on Windows and macOS, plus a published branch-aware coverage gate for the ledger. See [the invariant-to-test map](docs/INVARIANTS.md), [operator runbook](docs/RUNBOOK.md), and [development roadmap](docs/ROADMAP.md).
+CI runs the offline suite across Python 3.9/3.11/3.13 on Ubuntu, Python 3.11 on
+Windows and macOS, plus branch-aware coverage across all three runtime tools
+and Draft 2020-12 schema/example validation. See [the invariant-to-test
+map](docs/INVARIANTS.md), [operator runbook](docs/RUNBOOK.md), and [development
+roadmap](docs/ROADMAP.md).
 
-See [ENFORCEMENT.md](.agents/skills/gpt-5-6-swarm/references/ENFORCEMENT.md) for the lifecycle, scope boundary, exit codes, recovery, and versioning contract; [SCHEDULING.md](.agents/skills/gpt-5-6-swarm/references/SCHEDULING.md) for bounded concurrency; [HOSTS.md](.agents/skills/gpt-5-6-swarm/references/HOSTS.md) for verified host capabilities versus gated experiments. The prompt-only workflow remains available when command execution or permission for control-plane state writes is absent.
+See [ENFORCEMENT.md](plugins/gpt-5-6-swarm/skills/gpt-5-6-swarm/references/ENFORCEMENT.md) for the lifecycle, scope boundary, exit codes, recovery, and versioning contract; [SCHEDULING.md](plugins/gpt-5-6-swarm/skills/gpt-5-6-swarm/references/SCHEDULING.md) for bounded concurrency; [HOSTS.md](plugins/gpt-5-6-swarm/skills/gpt-5-6-swarm/references/HOSTS.md) for verified host capabilities versus gated experiments. The prompt-only workflow remains available when command execution or permission for control-plane state writes is absent.
+
+## Evidence status
+
+Swarm publishes [engineering case studies](case-studies/README.md) and a
+[paired benchmark methodology](docs/BENCHMARKING.md), but it does not yet claim
+a general speedup or break-even point. Example durations are illustrative, not
+measurements. `scheduler_issued_peak` is never relabeled as observed host
+concurrency, and missing timing, token, credit, or telemetry values remain
+`UNKNOWN`. The offline comparator validates declared hashes and preregistered
+pair structure; it does not fetch or authenticate the source evidence bytes,
+so its arithmetic cannot support an empirical claim by itself.
 
 ## Safety model
 
@@ -298,7 +315,7 @@ Shared checkout mutation, integration, mutable databases and daemons, deployment
 
 This project is an independent derivative of [Forward Future's GPT-5.6 Relay](https://github.com/Forward-Future/gpt-5-6-relay), originally committed by Matthew Berman and distributed under the MIT License.
 
-Swarm retains Relay's core ideas around visible model-specific Codex threads, host-gated model/effort routing, concrete handoffs, one writer per checkout, and serial deployment. It adds the parallel scheduler, concurrency controls, launch-state protocol, resource isolation, task-bound one-shot authority, local artifact-byte verification, write-ahead recovery, drift/rebinding defenses, route library, doctor report, and reconciliation rules.
+Swarm retains Relay's core ideas around visible model-specific Codex threads, host-gated model/effort routing, concrete handoffs, one writer per checkout, and serial deployment. It adds the parallel scheduler, concurrency controls, launch-state protocol, resource isolation, task-bound one-shot authority, local artifact-byte verification, write-ahead recovery, drift/rebinding defenses, route library, doctor/status reports, frozen contracts, benchmark evidence, and reconciliation rules.
 
 The upstream copyright and MIT permission notice are preserved in [LICENSE](LICENSE). A detailed provenance record appears in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 

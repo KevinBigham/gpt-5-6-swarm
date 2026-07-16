@@ -1,6 +1,6 @@
 # Briefs, progress, and receipts
 
-Protocol reference set: `1.3.0`.
+Protocol reference set: `1.4.0`.
 
 Use this reference when constructing kickoff lines, worker briefs, receipts, progress updates, or the final report.
 
@@ -88,6 +88,14 @@ Report:
 
 Do not flood the user with raw worker transcripts. Do not call a created thread completed.
 
+For a durable local operator view, run `swarm_ledger.py render-status` and save
+stdout or pass one exact `--output` path. The page is static, dependency-free,
+and HTML-escapes ledger content. It shows recorded graph state, capability
+limits, artifacts, ambiguity, and resume status. It does not observe live host
+threads or upgrade scheduler-issued peak into observed concurrency. Journal
+status and reason are always visible; unsafe missing/mismatched journal state
+also appears as explicit ambiguity rather than only disabling the resume token.
+
 ## Fan-in review
 
 For each result, record:
@@ -117,3 +125,9 @@ Also state:
 - confirmation that workers, processes, leases, and cleanup are reconciled.
 
 Never report the planned graph as the route actually run.
+
+Performance diagnostics additionally follow `EVALUATION.md`: name the track,
+show valid/total pairs and per-arm failures, separate requested/issued/observed
+peak, keep missing usage `UNKNOWN`, stamp declared hashes as unverified, and
+label example data as illustrative. Comparator arithmetic alone is not
+empirical evidence.

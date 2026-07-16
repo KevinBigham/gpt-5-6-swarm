@@ -1,14 +1,26 @@
 # Operator runbook
 
-This runbook covers fail-closed recovery for protocol `1.3.0`. It never authorizes a new external effect. Preserve evidence and user-owned work throughout.
+This runbook covers fail-closed recovery for protocol `1.4.0`. It never authorizes a new external effect. Preserve evidence and user-owned work throughout.
 
 ## Start a run
 
 1. Verify the installed package with `swarm_ledger.py verify-reference-set`.
-2. Verify host capabilities individually using the procedure in `.agents/skills/gpt-5-6-swarm/references/HOSTS.md`. A tool existing is not proof that the active spawn surface exposes it.
+2. Verify host capabilities individually using the procedure in `plugins/gpt-5-6-swarm/skills/gpt-5-6-swarm/references/HOSTS.md`. A tool existing is not proof that the active spawn surface exposes it.
 3. Capture Git state with `capture-baseline` and retain its revision/digest in the route record. Use `--include-ignored` when relevant ignored paths can change the result.
 4. Initialize with explicit `--capability key=true|false` declarations. Run `show` and copy the capability tier plus disabled features into the kickoff.
-5. Do not create guarded or one-shot work when the tool refuses the declared capability set.
+5. For a stable/high-risk graph, optionally freeze the preflight plan with
+   `swarm_contract.py`. Pass the resulting file to each bound `create-node` and
+   audit changed paths before receipt acceptance.
+6. Do not create guarded or one-shot work when the tool refuses the declared capability set.
+
+## View status safely
+
+Run `render-status --run-id RUN` for escaped offline HTML on stdout, or add
+`--output /exact/path/status.html` to atomically replace one regular file. The
+page is a view of the validated ledger and `doctor` report. It is not live
+thread telemetry and cannot turn scheduler-issued peak into observed
+concurrency. Confirm the displayed journal status and reason; any unsafe
+missing or mismatched journal state appears under safety and ambiguity.
 
 ## Resolve `UNKNOWN`
 

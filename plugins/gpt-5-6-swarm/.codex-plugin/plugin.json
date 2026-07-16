@@ -1,0 +1,39 @@
+{
+  "name": "gpt-5-6-swarm",
+  "version": "0.4.0",
+  "description": "Bounded, fail-closed multi-agent orchestration for Codex.",
+  "author": {
+    "name": "Kevin Bigham",
+    "url": "https://github.com/KevinBigham"
+  },
+  "homepage": "https://github.com/KevinBigham/gpt-5-6-swarm",
+  "repository": "https://github.com/KevinBigham/gpt-5-6-swarm",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "multi-agent",
+    "orchestration",
+    "parallelism",
+    "evidence",
+    "safety"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "GPT-5.6 Swarm",
+    "shortDescription": "Bounded, fail-closed multi-agent orchestration",
+    "longDescription": "An independent community derivative that plans Codex work as a coordinator-owned graph, runs eligible agents concurrently, and reconciles results through evidence-backed gates.",
+    "developerName": "Kevin Bigham (community)",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/KevinBigham/gpt-5-6-swarm",
+    "defaultPrompt": [
+      "Use $gpt-5-6-swarm to orchestrate this task with bounded parallel agents.",
+      "Design a safe Swarm graph for this repository task.",
+      "Review this Swarm run for ambiguity, drift, and missing evidence."
+    ]
+  }
+}

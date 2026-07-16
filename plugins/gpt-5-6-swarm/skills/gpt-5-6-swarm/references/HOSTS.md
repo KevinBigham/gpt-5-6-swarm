@@ -1,6 +1,6 @@
 # Host capability matrix
 
-Protocol reference set: `1.3.0`.
+Protocol reference set: `1.4.0`.
 
 Swarm's guarantees are only as real as the host features they stand on.
 This file separates four things that are often blurred: what the protocol

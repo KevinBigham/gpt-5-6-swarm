@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/KevinBigham/gpt-5-6-swarm/schema/benchmark-case.schema.json",
+  "title": "GPT-5.6 Swarm benchmark case",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "benchmark_schema_version",
+    "case_id",
+    "family_id",
+    "scale",
+    "track",
+    "runtime",
+    "task",
+    "gate",
+    "graph_sha256",
+    "treatments",
+    "pairing"
+  ],
+  "properties": {
+    "benchmark_schema_version": {"const": 1},
+    "case_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+    "family_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+    "scale": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "unit"],
+      "properties": {
+        "value": {"type": "integer", "minimum": 1},
+        "unit": {"type": "string", "minLength": 1}
+      }
+    },
+    "track": {"enum": ["fixed_graph_scheduling", "end_to_end_workflow"]},
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["skill_sha256", "protocol_version", "tool_version", "routing_requirement"],
+      "properties": {
+        "skill_sha256": {"$ref": "#/$defs/sha256"},
+        "protocol_version": {"type": "string", "minLength": 1},
+        "tool_version": {"type": "string", "minLength": 1},
+        "routing_requirement": {"enum": ["pinned", "host_selected"]}
+      }
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["base_revision", "prompt_sha256", "fixture_sha256"],
+      "properties": {
+        "base_revision": {"type": "string", "minLength": 1},
+        "prompt_sha256": {"$ref": "#/$defs/sha256"},
+        "fixture_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evaluator_sha256", "scoring", "timeout_seconds"],
+      "properties": {
+        "evaluator_sha256": {"$ref": "#/$defs/sha256"},
+        "scoring": {"enum": ["deterministic", "blind_review"]},
+        "timeout_seconds": {"type": "integer", "minimum": 1}
+      }
+    },
+    "graph_sha256": {"$ref": "#/$defs/sha256"},
+    "treatments": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["serial", "swarm"],
+      "properties": {
+        "serial": {
+          "allOf": [
+            {"$ref": "#/$defs/treatment"},
+            {"properties": {"requested_parallel": {"const": 1}}}
+          ]
+        },
+        "swarm": {"$ref": "#/$defs/treatment"}
+      }
+    },
+    "pairing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["measured_pairs", "warmups", "order_seed", "preregistered_exclusions"],
+      "properties": {
+        "measured_pairs": {"type": "integer", "minimum": 1},
+        "warmups": {"type": "integer", "minimum": 0},
+        "order_seed": {"type": "integer", "minimum": 0},
+        "preregistered_exclusions": {"type": "array", "items": {"type": "string", "minLength": 1}}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"track": {"const": "fixed_graph_scheduling"}}},
+      "then": {
+        "properties": {
+          "treatments": {
+            "properties": {
+              "swarm": {"properties": {"requested_parallel": {"minimum": 2}}}
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "treatment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requested_parallel"],
+      "properties": {"requested_parallel": {"type": "integer", "minimum": 1}}
+    }
+  }
+}
