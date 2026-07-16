@@ -33,6 +33,12 @@ jobs:
       # Standard library only: no pip install step, by design.
       - name: Unit, scenario, and repository-hygiene tests
         run: python -m unittest discover -s tests -v
+      - name: Replay shipped contract and benchmark examples
+        run: |
+          python plugins/gpt-5-6-swarm/skills/gpt-5-6-swarm/scripts/swarm_contract.py validate examples/frozen-contract.example.json
+          python plugins/gpt-5-6-swarm/skills/gpt-5-6-swarm/scripts/swarm_benchmark.py validate-case examples/benchmark-case.example.json
+          python plugins/gpt-5-6-swarm/skills/gpt-5-6-swarm/scripts/swarm_benchmark.py compare examples/benchmark-case.example.json examples/benchmark-serial-trial.example.json examples/benchmark-swarm-trial.example.json
+          python plugins/gpt-5-6-swarm/skills/gpt-5-6-swarm/scripts/swarm_ledger.py verify-reference-set
 
   coverage:
     runs-on: ubuntu-latest

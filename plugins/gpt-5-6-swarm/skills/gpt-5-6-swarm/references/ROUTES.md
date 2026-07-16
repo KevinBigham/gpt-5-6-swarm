@@ -1,6 +1,6 @@
 # Routes and worker budgets
 
-Protocol reference set: `1.3.0`.
+Protocol reference set: `1.4.0`.
 
 Use this reference when preflight needs a route, budget, or graph template. The templates are starting points, not quotas.
 

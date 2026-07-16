@@ -1,6 +1,6 @@
 # Scheduling and bounded concurrency
 
-Protocol reference set: `1.3.0`.
+Protocol reference set: `1.4.0`.
 
 Throughput comes from launching everything that is safe and nothing that is
 not. This policy bounds "safe" with observed state, host limits, and

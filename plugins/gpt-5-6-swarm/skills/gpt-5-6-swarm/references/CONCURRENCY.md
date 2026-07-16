@@ -1,6 +1,6 @@
 # Concurrency and safety protocol
 
-Protocol reference set: `1.3.0`.
+Protocol reference set: `1.4.0`.
 
 Read the sections routed by `SKILL.md`; use this reference for mutation, command-running validation, background work, shared/external resources, and one-shot actions.
 
@@ -33,6 +33,12 @@ Only the coordinator schedules work. Each node records:
 - state and unresolved risk.
 
 Build the fingerprint from the normalized outcome, immutable inputs/base, resource/write scope, and acceptance gate. The coordinator must check it before every launch:
+
+When an optional frozen contract is used, validate the exact node through
+`create-node --frozen-contract`; its SHA-256 becomes the immutable inputs
+digest. Audit returned changed paths against the same contract before receipt
+acceptance. The contract does not replace live lease/resource checks or real
+external fencing.
 
 - Matching `CLAIMED`, `LAUNCHING`, `PREPARING`, `ARMED`, `RUNNING`, `CANCELING`, or `UNKNOWN`: observe or wait; never duplicate.
 - Matching `SUCCEEDED`: reuse only if base and assumptions still validate.

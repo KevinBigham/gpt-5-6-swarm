@@ -13,6 +13,24 @@ promised.
 - **tool version** - `swarm_ledger.py` build, recorded in every ledger it
   writes.
 
+## Unreleased - protocol 1.4.0 / schema 2 / tool 0.4.0
+
+- Repackaged the repository as a Git-installable Codex marketplace with one
+  canonical skill tree, a validated plugin manifest, preserved MIT notices,
+  and eight conservative project-scoped specialist profiles.
+- Added optional frozen contracts. Exact node fields, dependencies, route
+  requests, base revision, protected paths, and ownership are validated before
+  node creation; the contract digest is bound into the existing task
+  fingerprint without migrating ledger schema 2.
+- Added an escaped, offline `render-status` HTML operator view with atomic
+  exact-file output and explicit recorded-consistency/host-observation limits.
+- Added preregistered paired benchmark case/trial/report formats, deterministic
+  validation and comparison, anti-gaming methodology, and honest engineering
+  case studies. No general speedup or break-even claim is made.
+- Kept the default concurrency ceilings unchanged: four read-only lanes, three
+  isolated writers, one overlapping/shared writer, and a conservative peak of
+  three when host capacity is unknown.
+
 ## protocol 1.3.0 / schema 2 / tool 0.3.0 - Gen-2 evidence binding (2026-07-16)
 
 - Added fresh, task-fingerprint-bound, single-use operator authorization

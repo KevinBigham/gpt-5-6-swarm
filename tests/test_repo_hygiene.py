@@ -7,12 +7,15 @@ contracts, and a valid Codex skill package.
 
 import re
 import json
+import importlib.util
 import subprocess
+import sys
 import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SKILL_DIR = REPO_ROOT / ".agents" / "skills" / "gpt-5-6-swarm"
+PLUGIN_DIR = REPO_ROOT / "plugins" / "gpt-5-6-swarm"
+SKILL_DIR = PLUGIN_DIR / "skills" / "gpt-5-6-swarm"
 
 SECRET_PATTERNS = [
     re.compile(r"AKIA[0-9A-Z]{16}"),                    # AWS access key id
@@ -93,6 +96,72 @@ class TestRepoHygiene(unittest.TestCase):
         self.assertIn("$gpt-5-6-swarm", metadata)
         self.assertIn("allow_implicit_invocation: false", metadata)
 
+    def test_marketplace_plugin_tree_is_single_source_and_valid(self):
+        marketplace = json.loads((REPO_ROOT / ".agents" / "plugins" /
+                                  "marketplace.json").read_text("utf-8"))
+        self.assertEqual(marketplace["name"], "gpt-5-6-swarm")
+        self.assertEqual(len(marketplace["plugins"]), 1)
+        entry = marketplace["plugins"][0]
+        self.assertEqual(entry["name"], "gpt-5-6-swarm")
+        self.assertEqual(entry["source"], {
+            "source": "local", "path": "./plugins/gpt-5-6-swarm"})
+        self.assertEqual(entry["policy"], {
+            "installation": "AVAILABLE", "authentication": "ON_INSTALL"})
+        self.assertEqual(entry["category"], "Developer Tools")
+
+        manifest = json.loads((PLUGIN_DIR / ".codex-plugin" /
+                               "plugin.json").read_text("utf-8"))
+        allowed = {"name", "version", "description", "author", "homepage",
+                   "repository", "license", "keywords", "skills", "interface"}
+        self.assertEqual(set(manifest), allowed)
+        self.assertEqual(manifest["name"], PLUGIN_DIR.name)
+        self.assertRegex(manifest["version"],
+                         r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
+        self.assertEqual(manifest["skills"], "./skills/")
+        self.assertNotIn("hooks", manifest)
+        self.assertNotIn("apps", manifest)
+        self.assertNotIn("mcpServers", manifest)
+        self.assertTrue((SKILL_DIR / "SKILL.md").is_file())
+        self.assertTrue((SKILL_DIR / "LICENSE").is_file())
+        self.assertTrue((SKILL_DIR / "THIRD_PARTY_NOTICES.md").is_file())
+        self.assertFalse((REPO_ROOT / ".agents" / "skills" /
+                          "gpt-5-6-swarm").exists(),
+                         "a duplicate project skill would drift from the plugin")
+
+    def test_project_agent_profiles_are_narrow_and_portable(self):
+        profile_dir = REPO_ROOT / ".codex" / "agents"
+        profiles = sorted(profile_dir.glob("swarm-*.toml"))
+        self.assertEqual(len(profiles), 8)
+        names = set()
+        for path in profiles:
+            text = path.read_text("utf-8")
+            self.assertIn("never the root coordinator", text)
+            self.assertIn("Never create, delegate to, or follow up another agent", text)
+            self.assertIn("never mutate the canonical ledger", text)
+            self.assertNotRegex(text, r"(?m)^model\s*=")
+            self.assertNotRegex(text, r"(?m)^model_reasoning_effort\s*=")
+            if sys.version_info >= (3, 11):
+                import tomllib
+                payload = tomllib.loads(text)
+                self.assertEqual(set(payload), {
+                    "name", "description", "developer_instructions"})
+                self.assertNotIn(payload["name"], names)
+                names.add(payload["name"])
+            else:
+                keys = {line.split("=", 1)[0].strip() for line in text.splitlines()
+                        if re.match(r"^[a-z_]+\s*=", line)}
+                self.assertEqual(keys, {
+                    "name", "description", "developer_instructions"})
+
+    def test_conservative_concurrency_defaults_are_preserved(self):
+        scheduling = (SKILL_DIR / "references" /
+                      "SCHEDULING.md").read_text("utf-8")
+        routes = (SKILL_DIR / "references" / "ROUTES.md").read_text("utf-8")
+        self.assertIn("| `PURE` read-only lanes | 4 |", scheduling)
+        self.assertIn("| `ISOLATED` writers, disjoint scopes | 3 |", scheduling)
+        self.assertIn("If host capacity is unknown, default to peak 3.", routes)
+        self.assertIn("Auto mode normally caps peak at 4.", routes)
+
     def test_no_compiled_python_artifacts_tracked(self):
         offenders = [str(path) for path in self.files
                      if path.suffix == ".pyc" or "__pycache__" in path.parts]
@@ -100,7 +169,6 @@ class TestRepoHygiene(unittest.TestCase):
                          "compiled Python artifacts must not ship")
 
     def test_examples_are_semantically_valid(self):
-        import importlib.util
         tool = (SKILL_DIR / "scripts" / "swarm_ledger.py")
         spec = importlib.util.spec_from_file_location("swarm_ledger_h", tool)
         sl = importlib.util.module_from_spec(spec)
@@ -115,6 +183,33 @@ class TestRepoHygiene(unittest.TestCase):
         sl.validate_receipt(doc["nodes"]["impl#1"], receipt,
                             doc["run_id"], "SUCCEEDED")
 
+        contract_tool = SKILL_DIR / "scripts" / "swarm_contract.py"
+        contract_spec = importlib.util.spec_from_file_location(
+            "swarm_contract_h", contract_tool)
+        contract = importlib.util.module_from_spec(contract_spec)
+        contract_spec.loader.exec_module(contract)
+        draft = json.loads((REPO_ROOT / "examples" /
+                            "contract-draft.example.json").read_text("utf-8"))
+        frozen = json.loads((REPO_ROOT / "examples" /
+                             "frozen-contract.example.json").read_text("utf-8"))
+        self.assertEqual(contract.freeze_contract(draft), frozen)
+
+        benchmark_tool = SKILL_DIR / "scripts" / "swarm_benchmark.py"
+        benchmark_spec = importlib.util.spec_from_file_location(
+            "swarm_benchmark_h", benchmark_tool)
+        benchmark = importlib.util.module_from_spec(benchmark_spec)
+        benchmark_spec.loader.exec_module(benchmark)
+        case = json.loads((REPO_ROOT / "examples" /
+                           "benchmark-case.example.json").read_text("utf-8"))
+        serial = json.loads((REPO_ROOT / "examples" /
+                             "benchmark-serial-trial.example.json").read_text("utf-8"))
+        swarm = json.loads((REPO_ROOT / "examples" /
+                            "benchmark-swarm-trial.example.json").read_text("utf-8"))
+        expected_report = json.loads((REPO_ROOT / "examples" /
+                                      "benchmark-report.example.json").read_text("utf-8"))
+        self.assertEqual(benchmark.compare_trials(case, [serial, swarm]),
+                         expected_report)
+
     def test_schema_contract_matches_runtime_and_examples(self):
         import importlib.util
         tool = SKILL_DIR / "scripts" / "swarm_ledger.py"
@@ -127,6 +222,10 @@ class TestRepoHygiene(unittest.TestCase):
                                      "receipt.schema.json").read_text("utf-8"))
         authorization_schema = json.loads((REPO_ROOT / "schema" /
             "one-shot-authorization.schema.json").read_text("utf-8"))
+        benchmark_case_schema = json.loads((REPO_ROOT / "schema" /
+            "benchmark-case.schema.json").read_text("utf-8"))
+        benchmark_trial_schema = json.loads((REPO_ROOT / "schema" /
+            "benchmark-trial.schema.json").read_text("utf-8"))
         example = json.loads((REPO_ROOT / "examples" /
                               "ledger.example.json").read_text("utf-8"))
         node = next(iter(example["nodes"].values()))
@@ -150,6 +249,14 @@ class TestRepoHygiene(unittest.TestCase):
                          set(sl.REQUIRED_AUTHORIZATION_KEYS))
         self.assertEqual(set(authorization),
                          set(sl.REQUIRED_AUTHORIZATION_KEYS))
+        benchmark_case = json.loads((REPO_ROOT / "examples" /
+            "benchmark-case.example.json").read_text("utf-8"))
+        benchmark_trial = json.loads((REPO_ROOT / "examples" /
+            "benchmark-serial-trial.example.json").read_text("utf-8"))
+        self.assertEqual(set(benchmark_case_schema["required"]),
+                         set(benchmark_case))
+        self.assertEqual(set(benchmark_trial_schema["required"]),
+                         set(benchmark_trial))
 
     def test_release_contract_consistency(self):
         import importlib.util
@@ -162,6 +269,8 @@ class TestRepoHygiene(unittest.TestCase):
             "schema": sl.SCHEMA_VERSION,
             "tool": sl.TOOL_VERSION,
         }
+        manifest = json.loads((PLUGIN_DIR / ".codex-plugin" /
+                               "plugin.json").read_text("utf-8"))
         skill = (SKILL_DIR / "SKILL.md").read_text("utf-8")
         enforcement = (SKILL_DIR / "references" /
                        "ENFORCEMENT.md").read_text("utf-8")
@@ -177,6 +286,7 @@ class TestRepoHygiene(unittest.TestCase):
         self.assertEqual(example["protocol_version"], current["protocol"])
         self.assertEqual(example["schema_version"], current["schema"])
         self.assertEqual(example["tool_version"], current["tool"])
+        self.assertEqual(manifest["version"], "0.4.0")
         for relative in sl.REFERENCE_SET_FILES:
             text = (SKILL_DIR / relative).read_text("utf-8")
             self.assertEqual(text.count(sl.REFERENCE_SET_STAMP), 1, relative)

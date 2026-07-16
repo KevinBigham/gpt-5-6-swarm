@@ -1,0 +1,46 @@
+{
+  "arm_counts": {
+    "serial": {
+      "passed": 1,
+      "total": 1,
+      "unknown": 0
+    },
+    "swarm": {
+      "passed": 1,
+      "total": 1,
+      "unknown": 0
+    }
+  },
+  "benchmark_report_version": 1,
+  "break_even_status": "insufficient_evidence",
+  "case_sha256": "f1bcb78405283dd6f92802ad4c39a1df3f016256357938fcda0cf74e8beb48ec",
+  "eligible_pairs": [
+    {
+      "pair_id": "pair-001",
+      "replicate": 1,
+      "savings_ns": 3750000000,
+      "serial_duration_ns": 10000000000,
+      "speedup": 1.6,
+      "swarm_duration_ns": 6250000000
+    }
+  ],
+  "ineligible_pairs": [],
+  "median_paired_savings_ns": 3750000000,
+  "median_paired_speedup": 1.6,
+  "observed_peak_coverage": {
+    "known": 0,
+    "total": 2
+  },
+  "planned_measured_pairs": 1,
+  "track": "fixed_graph_scheduling",
+  "usage_complete": false,
+  "warnings": [
+    "Scheduler-issued peak is not observed host concurrency.",
+    "Break-even claims require a preregistered scale series and uncertainty analysis."
+  ],
+  "wins_ties_losses": {
+    "losses": 0,
+    "ties": 0,
+    "wins": 1
+  }
+}

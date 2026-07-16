@@ -28,13 +28,15 @@ Design principles:
   * Ambiguity is preserved, not resolved: UNKNOWN stays UNKNOWN until a
     human/coordinator records reconciliation evidence.
 
-Protocol version: 1.3.0   Schema version: 2   (see references/ENFORCEMENT.md)
+Protocol version: 1.4.0   Schema version: 2   (see references/ENFORCEMENT.md)
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import html
+import importlib.util
 import json
 import os
 import re
@@ -46,18 +48,20 @@ import tempfile
 import unicodedata
 from datetime import datetime, timedelta, timezone
 
-TOOL_VERSION = "0.3.0"
-PROTOCOL_VERSION = "1.3.0"
+TOOL_VERSION = "0.4.0"
+PROTOCOL_VERSION = "1.4.0"
 SCHEMA_VERSION = 2
 SUPPORTED_SCHEMA_VERSIONS = {2}
-SUPPORTED_PROTOCOL_SERIES = {(1, 3)}
+SUPPORTED_PROTOCOL_SERIES = {(1, 4)}
 
 REFERENCE_SET_STAMP = f"Protocol reference set: `{PROTOCOL_VERSION}`."
 REFERENCE_SET_FILES = (
     "SKILL.md",
     "DEPLOYMENT.md",
     "references/CONCURRENCY.md",
+    "references/CONTRACTS.md",
     "references/ENFORCEMENT.md",
+    "references/EVALUATION.md",
     "references/HOSTS.md",
     "references/REPORTING.md",
     "references/ROUTES.md",
@@ -1590,7 +1594,8 @@ def op_create_node(root, run_id, writer, expect_generation, *, node_id,
                    dependencies, join, supersedes=None,
                    authorize_retry=None, dup_group=None,
                    supplied_fingerprint=None,
-                   one_shot_authorization_file=None):
+                   one_shot_authorization_file=None,
+                   frozen_contract_file=None):
     if not ID_RE.match(node_id):
         raise LedgerError(EXIT_USAGE, f"node id {node_id!r} fails id grammar")
     if klass not in CLASSES:
@@ -1619,6 +1624,34 @@ def op_create_node(root, run_id, writer, expect_generation, *, node_id,
         raise LedgerError(EXIT_SEMANTIC,
                           "intentional duplicate groups are PURE-only")
     scope_ids = [f"{r['type']}:{r['id']}" for r in parsed_resources]
+    if frozen_contract_file:
+        bound_ledger = load_ledger(root, run_id)
+        contract_path = os.path.join(os.path.dirname(__file__),
+                                     "swarm_contract.py")
+        spec = importlib.util.spec_from_file_location(
+            "swarm_contract_runtime", contract_path)
+        if spec is None or spec.loader is None:
+            raise LedgerError(EXIT_CORRUPT,
+                              "cannot load frozen-contract validator")
+        contract_tool = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(contract_tool)
+        try:
+            envelope = contract_tool.load_frozen_contract(
+                frozen_contract_file)
+            contract_digest = contract_tool.assert_node_matches(
+                envelope, node_id=node_id, klass=klass, model=model,
+                effort=effort, outcome=outcome, gate=gate,
+                base_revision=base_revision, dependencies=dependencies,
+                join=join, resources=scope_ids, run_id=run_id,
+                task_digest=bound_ledger["task"]["description_digest"])
+        except contract_tool.ContractError as exc:
+            raise LedgerError(EXIT_SEMANTIC,
+                              "frozen contract refused node: " + str(exc))
+        if inputs_digest not in {"none", contract_digest}:
+            raise LedgerError(
+                EXIT_SEMANTIC,
+                "inputs digest does not match the frozen contract")
+        inputs_digest = contract_digest
     fingerprint = compute_fingerprint(outcome, base_revision, inputs_digest,
                                       scope_ids, gate)
     if supplied_fingerprint and supplied_fingerprint != fingerprint:
@@ -3159,6 +3192,146 @@ def op_doctor(root, run_id):
     }
 
 
+def render_status_html(ledger, report):
+    """Render a deterministic, dependency-free view of one validated run."""
+    findings = validate_ledger(ledger)
+    if _blocking_semantic_findings(findings):
+        raise LedgerError(exit_code_for(findings),
+                          "refusing to render an invalid ledger")
+
+    def esc(value):
+        if value is None:
+            value = "UNKNOWN"
+        return html.escape(str(value), quote=True)
+
+    counts = {}
+    node_rows = []
+    for ref, node in sorted(ledger["nodes"].items()):
+        counts[node["state"]] = counts.get(node["state"], 0) + 1
+        dependencies = ", ".join(node["dependencies"]) or "—"
+        resources = ", ".join(
+            f"{item['type']}:{item['id']}" for item in node["resources"]
+        ) or "—"
+        node_rows.append(
+            "<tr><td><code>{}</code></td><td><span class=\"state\">{}</span>"
+            "</td><td>{}</td><td>{}/{}</td><td>{}</td><td>{}</td>"
+            "<td>{}</td><td>{}</td><td>{}</td></tr>".format(
+                esc(ref), esc(node["state"]), esc(node["class"]),
+                esc(node["model"]), esc(node["effort"]), esc(dependencies),
+                esc(resources), esc(node["fingerprint_inputs"]["outcome"]),
+                esc(node["fingerprint_inputs"]["gate"]),
+                esc(node.get("artifact_disposition") or "—")))
+    if not node_rows:
+        node_rows.append("<tr><td colspan=\"9\">No nodes recorded.</td></tr>")
+
+    artifact_rows = []
+    for item in report["artifacts"]:
+        artifact_rows.append(
+            "<tr><td><code>{}</code></td><td>{}</td><td>{}</td><td>{}</td>"
+            "</tr>".format(esc(item["node"]), esc(item["artifact"]),
+                            esc(item["disposition"]),
+                            esc(item["verification"])))
+    if not artifact_rows:
+        artifact_rows.append("<tr><td colspan=\"4\">No accepted artifacts.</td></tr>")
+
+    issue_rows = []
+    for finding in report["findings"]:
+        issue_rows.append(
+            "<li><strong>{}</strong> <code>{}</code> {}: {}</li>".format(
+                esc(finding["severity"]), esc(finding["code"]),
+                esc(finding["node"] or "run"), esc(finding["message"])))
+    for ref in report["unresolved_unknown"]:
+        issue_rows.append("<li><strong>UNKNOWN</strong> {}</li>".format(
+            esc(ref)))
+    for item in report["in_flight_ambiguity"]:
+        issue_rows.append("<li><strong>IN FLIGHT</strong> {}: {}</li>".format(
+            esc(item["node"]), esc(item["kind"])))
+    if not issue_rows:
+        issue_rows.append("<li>No recorded violations or ambiguity.</li>")
+
+    profile = report["capabilities"]
+    disabled = ", ".join(profile["disabled"]) or "none"
+    summary = " · ".join(
+        "{} {}".format(count, state.lower())
+        for state, count in sorted(counts.items())) or "0 nodes"
+    token = report["resume"]["token"] or "unavailable"
+    return """<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Swarm status · {run_id}</title>
+<style>
+:root {{ color-scheme: light dark; font-family: ui-sans-serif, system-ui, sans-serif; }}
+body {{ max-width: 1100px; margin: 2rem auto; padding: 0 1rem; line-height: 1.45; }}
+.badge {{ border: 2px solid #d97706; border-radius: .5rem; padding: .75rem; }}
+.grid {{ display: grid; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); gap: .75rem; }}
+.card {{ border: 1px solid #8888; border-radius: .5rem; padding: .75rem; }}
+table {{ border-collapse: collapse; width: 100%; font-size: .9rem; }}
+th,td {{ border: 1px solid #8888; padding: .45rem; text-align: left; vertical-align: top; }}
+th {{ background: #7772; }} code {{ overflow-wrap: anywhere; }}
+.state {{ font-weight: 700; }} .muted {{ opacity: .75; }}
+</style></head><body>
+<h1>GPT-5.6 Swarm operator status</h1>
+<p class="badge"><strong>{badge}</strong></p>
+<div class="grid">
+<div class="card"><strong>Run</strong><br><code>{run_id}</code></div>
+<div class="card"><strong>Generation</strong><br>{generation}</div>
+<div class="card"><strong>Protocol / schema</strong><br>{protocol} / {schema}</div>
+<div class="card"><strong>Recorded state</strong><br>{summary}</div>
+</div>
+<h2>Capability boundary</h2>
+<p>Tier: <strong>{tier}</strong><br>Disabled: {disabled}<br>
+<span class="muted">{capability_evidence}</span></p>
+<h2>Graph</h2>
+<table><thead><tr><th>Node</th><th>State</th><th>Class</th><th>Route</th>
+<th>Dependencies</th><th>Resources</th><th>Outcome</th><th>Gate</th>
+<th>Disposition</th></tr></thead>
+<tbody>{node_rows}</tbody></table>
+<h2>Artifacts</h2>
+<table><thead><tr><th>Node</th><th>Artifact</th><th>Disposition</th>
+<th>Verification</th></tr></thead><tbody>{artifact_rows}</tbody></table>
+<h2>Safety and ambiguity</h2><ul>{issue_rows}</ul>
+<h2>Resume</h2><p>Resumable: <strong>{resumable}</strong><br>
+Token: <code>{token}</code></p>
+<p class="muted">Static offline view. It does not observe live host threads,
+authenticate receipts, or verify external effects.</p>
+</body></html>
+""".format(
+        run_id=esc(ledger["run_id"]), badge=esc(report["safety_badge"]),
+        generation=esc(ledger["generation"]),
+        protocol=esc(ledger["protocol_version"]),
+        schema=esc(ledger["schema_version"]), summary=esc(summary),
+        tier=esc(profile["tier"]), disabled=esc(disabled),
+        capability_evidence=esc(report["capability_evidence"]),
+        node_rows="".join(node_rows), artifact_rows="".join(artifact_rows),
+        issue_rows="".join(issue_rows),
+        resumable=esc(report["resume"]["resumable"]), token=esc(token))
+
+
+def write_status_html(path, content):
+    """Atomically replace one exact regular output file."""
+    absolute = os.path.abspath(path)
+    parent = os.path.dirname(absolute)
+    if not os.path.isdir(parent):
+        raise LedgerError(EXIT_USAGE, "status output parent must exist")
+    if os.path.lexists(absolute):
+        info = os.lstat(absolute)
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+            raise LedgerError(EXIT_CORRUPT,
+                              "status output must be a regular non-symlink")
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=".swarm-status-", dir=parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, absolute)
+    finally:
+        if os.path.exists(temporary):
+            os.remove(temporary)
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -3272,6 +3445,10 @@ def build_parser():
     p.add_argument("--one-shot-authorization",
                    dest="one_shot_authorization_file",
                    help="operator-supplied, task-bound authorization JSON")
+    p.add_argument(
+        "--frozen-contract", dest="frozen_contract_file",
+        help="optional contract frozen by swarm_contract.py; exact node "
+             "fields are checked and its digest becomes inputs_digest")
 
     p = sub.add_parser("record-dispatch",
                        help="record that the create call was issued")
@@ -3344,6 +3521,13 @@ def build_parser():
     common(p, mutating=False)
     p = sub.add_parser("doctor", help="read-only safety and resume report")
     common(p, mutating=False)
+    p = sub.add_parser(
+        "render-status",
+        help="render an escaped, offline HTML operator status page")
+    common(p, mutating=False)
+    p.add_argument(
+        "--output",
+        help="optional exact output file; stdout keeps the command read-only")
     return parser
 
 
@@ -3393,7 +3577,8 @@ def main(argv=None) -> int:
                 dup_group=args.dup_group,
                 supplied_fingerprint=args.supplied_fingerprint,
                 one_shot_authorization_file=
-                args.one_shot_authorization_file)
+                args.one_shot_authorization_file,
+                frozen_contract_file=args.frozen_contract_file)
             print(f"created node; ledger at generation {ledger['generation']}")
         elif args.command == "record-dispatch":
             ledger = op_record_dispatch(args.root, args.run_id, args.writer,
@@ -3457,6 +3642,15 @@ def main(argv=None) -> int:
         elif args.command == "doctor":
             print(json.dumps(op_doctor(args.root, args.run_id),
                              indent=2, sort_keys=True))
+        elif args.command == "render-status":
+            ledger = load_ledger(args.root, args.run_id)
+            content = render_status_html(ledger, op_doctor(
+                args.root, args.run_id))
+            if args.output:
+                write_status_html(args.output, content)
+                print(f"wrote status page to {os.path.abspath(args.output)}")
+            else:
+                print(content, end="")
         return EXIT_OK
     except LedgerError as exc:
         print(f"ERROR({exc.exit_code}): {exc.message}", file=sys.stderr)

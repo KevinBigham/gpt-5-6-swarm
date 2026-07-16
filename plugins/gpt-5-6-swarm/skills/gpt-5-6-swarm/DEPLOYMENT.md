@@ -1,6 +1,6 @@
 # Serial deployment after a swarm
 
-Protocol reference set: `1.3.0`.
+Protocol reference set: `1.4.0`.
 
 Read this file only when the user authorized deployment and the graph contains a deployment node.
 

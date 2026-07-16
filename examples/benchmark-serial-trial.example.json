@@ -1,0 +1,38 @@
+{
+  "benchmark_schema_version": 1,
+  "case_sha256": "f1bcb78405283dd6f92802ad4c39a1df3f016256357938fcda0cf74e8beb48ec",
+  "trial_id": "example-serial-001",
+  "pair_id": "pair-001",
+  "arm": "serial",
+  "replicate": 1,
+  "order": "AB",
+  "warmup": false,
+  "host_profile_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+  "routing_status": "host_selected",
+  "duration_ns": 10000000000,
+  "timing_source": "illustrative monotonic timing receipt",
+  "terminal_status": "SUCCEEDED",
+  "acceptance_passed": true,
+  "gate_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+  "artifact_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+  "requested_parallel": 1,
+  "scheduler_issued_peak": 1,
+  "observed_peak": null,
+  "telemetry_sha256": null,
+  "usage": {
+    "input_tokens": null,
+    "output_tokens": null,
+    "credits": null,
+    "source": null
+  },
+  "unknowns": 0,
+  "retries": 0,
+  "exclusion_reason": null,
+  "evidence": {
+    "ledger": "8888888888888888888888888888888888888888888888888888888888888888",
+    "journal": "9999999999999999999999999999999999999999999999999999999999999999",
+    "doctor": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "gate_log": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "timing": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  }
+}

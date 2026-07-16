@@ -5,11 +5,11 @@ description: Orchestrate complex work through bounded parallel GPT-5.6 Codex sub
 
 # GPT-5.6 Swarm
 
-Protocol reference set: `1.3.0`.
+Protocol reference set: `1.4.0`.
 
 Parallel where independent. Relay where dependent.
 
-Protocol version `1.3.0` (compatibility contract: `references/ENFORCEMENT.md`).
+Protocol version `1.4.0` (compatibility contract: `references/ENFORCEMENT.md`).
 
 Turn the user's task into a coordinator-owned dependency graph, run every safe ready lane concurrently, and reconcile real artifacts through explicit gates. Use host-managed Codex subagent threads whose identity, lifecycle, and results the coordinator can account for. Do not replace them with hidden subprocess agents.
 
@@ -31,7 +31,7 @@ These rules are the compact, always-on safety kernel:
 
 ## Reference routing
 
-Load references on demand: [`ROUTES.md`](references/ROUTES.md) when selecting a graph/budget; [`SCHEDULING.md`](references/SCHEDULING.md) while scheduling; [`REPORTING.md`](references/REPORTING.md) when constructing briefs or receipts; and [`HOSTS.md`](references/HOSTS.md) while probing capabilities. When local control-plane writes are allowed, use [`ENFORCEMENT.md`](references/ENFORCEMENT.md) and `scripts/swarm_ledger.py`; run `verify-reference-set`, then `init`. Use [`CONCURRENCY.md`](references/CONCURRENCY.md) for any mutation, command-running validator, background process, external resource, or one-shot action. Load [`DEPLOYMENT.md`](DEPLOYMENT.md) only when deployment is explicitly authorized and present in the graph. Without execution/control-plane-write capability, retain the prompt-only ledger and report that limitation.
+Load references on demand: [`ROUTES.md`](references/ROUTES.md) when selecting a graph/budget; [`SCHEDULING.md`](references/SCHEDULING.md) while scheduling; [`REPORTING.md`](references/REPORTING.md) when constructing briefs or receipts; and [`HOSTS.md`](references/HOSTS.md) while probing capabilities. When local control-plane writes are allowed, use [`ENFORCEMENT.md`](references/ENFORCEMENT.md) and `scripts/swarm_ledger.py`; run `verify-reference-set`, then `init`. Use [`CONCURRENCY.md`](references/CONCURRENCY.md) for any mutation, command-running validator, background process, external resource, or one-shot action. Read [`CONTRACTS.md`](references/CONTRACTS.md) before freezing a graph or binding `create-node`; read [`EVALUATION.md`](references/EVALUATION.md) before measuring or publishing performance. Load [`DEPLOYMENT.md`](DEPLOYMENT.md) only when deployment is explicitly authorized and present in the graph. Without execution/control-plane-write capability, retain the prompt-only ledger and report that limitation.
 
 ## Preflight
 
@@ -42,6 +42,10 @@ Load references on demand: [`ROUTES.md`](references/ROUTES.md) when selecting a 
 5. Select a mode and budgets from `ROUTES.md`. `workers` is the total worker-node child-thread ceiling and `parallel` is the peak simultaneous worker-node ceiling; both exclude an optional proxy coordinator child. The proxy consumes one host slot and is reported separately. These are ceilings, not quotas.
 6. Classify every proposed node using `CONCURRENCY.md`. Unknown side effects default to exclusive execution.
 7. Build the graph and resource-conflict map. Preflight passes only when every node has one owner, one useful deliverable, one gate, known dependencies, and safe resource ownership.
+   For stable or high-risk graphs, optionally freeze the exact plan with
+   `scripts/swarm_contract.py` and bind each node through
+   `create-node --frozen-contract`; do not treat that recorded contract as a
+   real host/resource fence.
 8. Show the kickoff line, derived capability tier, disabled features, and compact route table from `REPORTING.md` before launching children.
 
 ## Coordinator selection
@@ -175,5 +179,9 @@ If an upstream contract changes, invalidate affected descendants. Reuse only out
 ## Completion
 
 The run is not complete while any action is claimed, launching, preparing, armed, running, canceling, or unreconciled unknown, or while any worker, observable background process, resource lease, output, or cleanup item is unaccounted for. A resolved `UNKNOWN` remains immutable history but is accounted for only when its recorded reconciliation proof passes review and all affected resources are explicitly released. A synchronous foreground command is accounted for by terminal-tool completion plus exit status; deliberately backgrounded work additionally requires a host-exposed session/process identity and liveness/stop controls, otherwise it is prohibited.
+
+If the task measures Swarm itself, use the paired evidence contract in
+`references/EVALUATION.md`. Example durations are never evidence; keep missing
+timing, usage, and observed concurrency explicitly unknown.
 
 Lead the final response with the finished outcome. Include the actual—not planned—receipt: coordinator identity, total accounted children, worker thread IDs, models/efforts, artifacts, gates, worker count, scheduler-issued peak concurrency, integrations, escalations, invalidations, skipped lanes, external effects, and remaining risks. Call concurrency “observed” only when the host provides authoritative active-thread telemetry. Retain child records according to host and user policy; never archive user-visible records automatically.

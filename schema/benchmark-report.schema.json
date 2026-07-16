@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/KevinBigham/gpt-5-6-swarm/schema/benchmark-report.schema.json",
+  "title": "GPT-5.6 Swarm derived benchmark report",
+  "type": "object",
+  "required": [
+    "benchmark_report_version", "case_sha256", "track",
+    "planned_measured_pairs", "eligible_pairs", "ineligible_pairs",
+    "arm_counts", "median_paired_speedup", "median_paired_savings_ns",
+    "wins_ties_losses", "observed_peak_coverage", "usage_complete",
+    "break_even_status", "warnings"
+  ],
+  "additionalProperties": false
+}

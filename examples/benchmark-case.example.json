@@ -1,0 +1,43 @@
+{
+  "benchmark_schema_version": 1,
+  "case_id": "pure-four-lane-small",
+  "family_id": "pure-four-lane",
+  "scale": {
+    "value": 4,
+    "unit": "independent-read-lanes"
+  },
+  "track": "fixed_graph_scheduling",
+  "runtime": {
+    "skill_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "protocol_version": "1.4.0",
+    "tool_version": "0.4.0",
+    "routing_requirement": "host_selected"
+  },
+  "task": {
+    "base_revision": "example-revision",
+    "prompt_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "fixture_sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+  },
+  "gate": {
+    "evaluator_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+    "scoring": "deterministic",
+    "timeout_seconds": 900
+  },
+  "graph_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+  "treatments": {
+    "serial": {
+      "requested_parallel": 1
+    },
+    "swarm": {
+      "requested_parallel": 3
+    }
+  },
+  "pairing": {
+    "measured_pairs": 1,
+    "warmups": 0,
+    "order_seed": 56,
+    "preregistered_exclusions": [
+      "host outage proven by independent platform status evidence"
+    ]
+  }
+}
