@@ -14,11 +14,14 @@ reconciliation.
    first worker creation. Inspect and retain the printed SHA-256.
 3. Pass `--frozen-contract CONTRACT` to every bound `create-node`. The ledger
    refuses mismatched fields and uses the contract digest as `inputs_digest`,
-   binding it into the existing task fingerprint.
+   binding it into the existing task fingerprint. The first node atomically
+   selects one immutable run sidecar; all later nodes must supply the same
+   contract, and contract mode cannot begin after an unbound node.
 4. After a mutating worker returns, run `swarm_contract.py audit-paths` for all
    changed paths before accepting its receipt.
 
-The validator rejects cycles, invalid joins, duplicate/extra fields,
+The validator uses bounded polynomial-time dependency closure and rejects
+cycles, invalid joins, duplicate/extra fields,
 noncanonical paths/resources, protected-path claims, `PURE` mutation scopes,
 mutation nodes without scopes, and resource overlap between independent nodes.
 Dependency-ordered nodes may overlap because their execution is serialized.

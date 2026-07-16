@@ -182,7 +182,22 @@ class TestFrozenContract(unittest.TestCase):
                     self.assertRaises(sc.ContractError):
                 sc.canonical_resource(resource)
         self.assertFalse(sc._resource_conflict("key:a", "path:a"))
-        self.assertFalse(sc._has_path({"a": ["a"]}, "a", "missing"))
+        self.assertEqual(sc._dependency_closure({"a": [], "b": ["a"]}),
+                         {"a": set(), "b": {"a"}})
+
+        unhashable = [
+            lambda value: value.update(protected_paths=[[]]),
+            lambda value: value["nodes"][0].update({"class": []}),
+            lambda value: value["nodes"][0].update(effort=[]),
+            lambda value: value["nodes"][0].update(dependencies=[[]]),
+            lambda value: value["nodes"][0].update(resources=[[]]),
+            lambda value: value["nodes"][0].update(join=[]),
+        ]
+        for mutate in unhashable:
+            draft = copy.deepcopy(self.draft)
+            mutate(draft)
+            with self.subTest(mutate=mutate), self.assertRaises(sc.ContractError):
+                sc.validate_contract(draft)
 
         envelope = sc.freeze_contract(self.draft)
         for mutation, message in (
@@ -230,6 +245,38 @@ class TestFrozenContract(unittest.TestCase):
                 cwd=tmp, capture_output=True, text=True, timeout=30)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(result.stdout), sc.freeze_contract(self.draft))
+            malformed = copy.deepcopy(self.draft)
+            malformed["protected_paths"] = [[]]
+            draft.write_text(json.dumps(malformed), encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, str(TOOL_PATH), "freeze", str(draft)],
+                cwd=tmp, capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 4)
+            self.assertNotIn("Traceback", result.stderr)
+
+    def test_dense_128_node_dag_is_bounded_and_valid(self):
+        node_ids = ["node-{:03d}".format(index) for index in range(128)]
+        draft = {
+            "contract_version": 1,
+            "run_id": "dense-run",
+            "task_digest": "dense-task",
+            "base_revision": "dense-base",
+            "protected_paths": [".git", ".swarm/runs"],
+            "nodes": [],
+        }
+        for index, node_id in enumerate(node_ids):
+            draft["nodes"].append({
+                "node_id": node_id,
+                "class": "PURE",
+                "model": "gpt-5.6-luna",
+                "effort": "low",
+                "outcome": "inspect dense node {}".format(index),
+                "gate": "return bounded evidence",
+                "dependencies": node_ids[:index],
+                "join": "all",
+                "resources": [],
+            })
+        self.assertEqual(sc.validate_contract(draft), draft)
 
     def test_cli_freeze_validate_audit_and_atomic_output(self):
         with tempfile.TemporaryDirectory(prefix="contract-cli-") as tmp:

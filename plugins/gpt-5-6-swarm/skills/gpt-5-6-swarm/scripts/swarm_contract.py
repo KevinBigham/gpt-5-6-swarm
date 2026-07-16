@@ -109,6 +109,8 @@ def canonical_resource(value):
 
 
 def _join_valid(value, dependency_count):
+    if not isinstance(value, str):
+        return False
     if value in {"all", "any"}:
         return True
     match = re.fullmatch(r"quorum:([1-9][0-9]*)", value or "")
@@ -130,15 +132,39 @@ def _resource_conflict(left, right):
     return left_id == right_id
 
 
-def _has_path(graph, start, target, visiting=None):
-    if start == target:
-        return True
-    visiting = set() if visiting is None else visiting
-    if start in visiting:
-        return False
-    visiting.add(start)
-    return any(_has_path(graph, dep, target, visiting.copy())
-               for dep in graph[start])
+def _dependency_closure(graph):
+    """Return transitive dependencies in bounded polynomial time.
+
+    Kahn ordering rejects cycles first; closure sets are then built once in
+    dependency-first order. This avoids exponential path enumeration on dense
+    but valid DAGs.
+    """
+    children = {node_id: [] for node_id in graph}
+    remaining = {node_id: len(dependencies)
+                 for node_id, dependencies in graph.items()}
+    for node_id, dependencies in graph.items():
+        for dependency in dependencies:
+            children[dependency].append(node_id)
+    ready = sorted(node_id for node_id, count in remaining.items()
+                   if count == 0)
+    order = []
+    while ready:
+        node_id = ready.pop(0)
+        order.append(node_id)
+        for child in sorted(children[node_id]):
+            remaining[child] -= 1
+            if remaining[child] == 0:
+                ready.append(child)
+                ready.sort()
+    if len(order) != len(graph):
+        raise ContractError("dependency cycle detected")
+    closure = {}
+    for node_id in order:
+        reachable = set(graph[node_id])
+        for dependency in graph[node_id]:
+            reachable.update(closure[dependency])
+        closure[node_id] = reachable
+    return closure
 
 
 def validate_contract(contract):
@@ -153,10 +179,12 @@ def validate_contract(contract):
     _text(contract["task_digest"], "task_digest", 256)
     _text(contract["base_revision"], "base_revision", 256)
     protected = contract["protected_paths"]
-    if not isinstance(protected, list) or len(protected) != len(set(protected)):
+    if not isinstance(protected, list):
         raise ContractError("protected_paths must be a unique array")
     for index, path in enumerate(protected):
         canonical_path(path, "protected_paths[{}]".format(index))
+    if len(protected) != len(set(protected)):
+        raise ContractError("protected_paths must be a unique array")
     if protected != sorted(protected):
         raise ContractError("protected_paths must be sorted")
 
@@ -171,26 +199,33 @@ def validate_contract(contract):
         node_id = _text(node["node_id"], label + ".node_id", 128)
         if not ID_RE.fullmatch(node_id) or node_id in by_id:
             raise ContractError(label + ".node_id is invalid or duplicate")
-        if node["class"] not in CLASSES:
+        if not isinstance(node["class"], str) or node["class"] not in CLASSES:
             raise ContractError(label + ".class is invalid")
         _text(node["model"], label + ".model", 128)
-        if node["effort"] not in EFFORTS:
+        if not isinstance(node["effort"], str) or node["effort"] not in EFFORTS:
             raise ContractError(label + ".effort is invalid")
         _text(node["outcome"], label + ".outcome")
         _text(node["gate"], label + ".gate")
         dependencies = node["dependencies"]
-        if not isinstance(dependencies, list) or \
-                len(dependencies) != len(set(dependencies)):
+        if not isinstance(dependencies, list):
+            raise ContractError(label + ".dependencies must be unique")
+        for dependency in dependencies:
+            if not isinstance(dependency, str) or not ID_RE.fullmatch(
+                    _text(dependency, label + ".dependency", 128)):
+                raise ContractError(label + ".dependency is invalid")
+        if len(dependencies) != len(set(dependencies)):
             raise ContractError(label + ".dependencies must be unique")
         if dependencies != sorted(dependencies):
             raise ContractError(label + ".dependencies must be sorted")
         if not _join_valid(node["join"], len(dependencies)):
             raise ContractError(label + ".join is invalid")
         resources = node["resources"]
-        if not isinstance(resources, list) or len(resources) != len(set(resources)):
+        if not isinstance(resources, list):
             raise ContractError(label + ".resources must be unique")
         for resource in resources:
             canonical_resource(resource)
+        if len(resources) != len(set(resources)):
+            raise ContractError(label + ".resources must be unique")
         if resources != sorted(resources):
             raise ContractError(label + ".resources must be sorted")
         if node["class"] == "PURE" and resources:
@@ -207,18 +242,15 @@ def validate_contract(contract):
         for dependency in dependencies:
             if dependency not in graph or dependency == node_id:
                 raise ContractError(node_id + " has an invalid dependency")
-    for node_id, dependencies in graph.items():
-        if any(_has_path(graph, dependency, node_id)
-               for dependency in dependencies):
-            raise ContractError("dependency cycle detected at " + node_id)
+    closure = _dependency_closure(graph)
 
     node_ids = sorted(by_id)
     for index, left_id in enumerate(node_ids):
         left = by_id[left_id]
         for right_id in node_ids[index + 1:]:
             right = by_id[right_id]
-            ordered = _has_path(graph, left_id, right_id) or \
-                _has_path(graph, right_id, left_id)
+            ordered = left_id in closure[right_id] or \
+                right_id in closure[left_id]
             if ordered:
                 continue
             for left_resource in left["resources"]:

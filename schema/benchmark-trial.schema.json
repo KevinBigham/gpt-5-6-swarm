@@ -61,6 +61,32 @@
       }
     }
   },
+  "allOf": [
+    {
+      "if": {"properties": {"acceptance_passed": {"const": true}}},
+      "then": {"properties": {"terminal_status": {"const": "SUCCEEDED"}}}
+    },
+    {
+      "if": {"properties": {"observed_peak": {"type": "null"}}},
+      "then": {"properties": {"telemetry_sha256": {"type": "null"}}},
+      "else": {"properties": {"telemetry_sha256": {"$ref": "#/$defs/sha256"}}}
+    },
+    {
+      "if": {
+        "properties": {
+          "usage": {
+            "properties": {
+              "input_tokens": {"type": "null"},
+              "output_tokens": {"type": "null"},
+              "credits": {"type": "null"}
+            }
+          }
+        }
+      },
+      "then": {"properties": {"usage": {"properties": {"source": {"type": "null"}}}}},
+      "else": {"properties": {"usage": {"properties": {"source": {"type": "string", "minLength": 1}}}}}
+    }
+  ],
   "$defs": {
     "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}

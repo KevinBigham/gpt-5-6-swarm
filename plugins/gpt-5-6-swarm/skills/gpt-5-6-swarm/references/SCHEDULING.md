@@ -60,7 +60,8 @@ shipping a higher `PURE` default; when a local evaluation baseline exists
 Prefer fewer, better-briefed lanes over maximum fan-out. Fan out wide only
 when lanes are short, independent, and individually checkable. Long-running
 lanes (builds, suites) should be claimed early so their scope conflicts
-surface before dependent work queues behind them. Luna lanes are cheap;
+surface before dependent work queues behind them. Luna lanes are a
+lower-resource routing hypothesis, not a measured cost claim;
 Terra/Sol lanes are not - a Sol adjudication node at `xhigh`/`max` costs
 more than most whole recon fans, so budget it deliberately.
 

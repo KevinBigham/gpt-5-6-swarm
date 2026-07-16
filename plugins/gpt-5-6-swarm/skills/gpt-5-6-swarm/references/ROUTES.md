@@ -97,6 +97,6 @@ Very large recon inputs can dilute targeted retrieval, and this repository does 
 - Estimate each recon lane's input before dispatch. When the input is large enough to risk retrieval dilution, split it into bounded, snapshot-pinned slices, one Luna scout per slice, each briefed with explicit questions and required evidence. Record the chosen slice size as an experimental run parameter until local evals justify a default.
 - The cross-slice synthesis node is Terra, not Luna.
 - If any Luna scout reports low-confidence retrieval, missing evidence, or contradictory quotes, escalate that lane to Terra as a recorded attempt `N+1` (substitute upward, never silently).
-- Whole-corpus "read everything and summarize" lanes over large inputs start on Terra directly; Luna stays on targeted, sliced, or small-context recon where it is fast and cheap.
+- Whole-corpus "read everything and summarize" lanes over large inputs start on Terra directly; Luna stays on targeted, sliced, or small-context recon as an explicitly unevaluated routing heuristic, not a speed or cost claim.
 
 Peak concurrency for sliced recon still obeys `references/SCHEDULING.md` and the host thread ceiling.

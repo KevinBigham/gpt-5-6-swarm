@@ -2,40 +2,69 @@
   "arm_counts": {
     "serial": {
       "passed": 1,
-      "total": 1,
-      "unknown": 0
+      "terminal_statuses": {
+        "ABORTED": 0,
+        "CANCELED": 0,
+        "FAILED": 0,
+        "SUCCEEDED": 1,
+        "UNKNOWN": 0
+      },
+      "total": 1
     },
     "swarm": {
       "passed": 1,
-      "total": 1,
-      "unknown": 0
+      "terminal_statuses": {
+        "ABORTED": 0,
+        "CANCELED": 0,
+        "FAILED": 0,
+        "SUCCEEDED": 1,
+        "UNKNOWN": 0
+      },
+      "total": 1
     }
   },
   "benchmark_report_version": 1,
   "break_even_status": "insufficient_evidence",
   "case_sha256": "f1bcb78405283dd6f92802ad4c39a1df3f016256357938fcda0cf74e8beb48ec",
+  "declared_median_paired_savings_ns": 3750000000,
+  "declared_median_paired_speedup": 1.6,
   "eligible_pairs": [
     {
+      "order": "AB",
       "pair_id": "pair-001",
       "replicate": 1,
       "savings_ns": 3750000000,
       "serial_duration_ns": 10000000000,
-      "speedup": 1.6,
-      "swarm_duration_ns": 6250000000
+      "serial_trial_id": "example-serial-001",
+      "declared_ratio": 1.6,
+      "swarm_duration_ns": 6250000000,
+      "swarm_trial_id": "example-swarm-001"
     }
   ],
+  "evidence_coverage": {
+    "content_verified": 0,
+    "declared_hashes": 10,
+    "total_expected": 10
+  },
+  "evidence_status": "declared_hashes_unverified",
   "ineligible_pairs": [],
-  "median_paired_savings_ns": 3750000000,
-  "median_paired_speedup": 1.6,
   "observed_peak_coverage": {
-    "known": 0,
-    "total": 2
+    "declared_known": 0,
+    "total_submitted": 2
   },
   "planned_measured_pairs": 1,
+  "summary_status": "complete_declared_data",
   "track": "fixed_graph_scheduling",
-  "usage_complete": false,
+  "usage_coverage": {
+    "credits_declared": 0,
+    "input_tokens_declared": 0,
+    "output_tokens_declared": 0,
+    "total_submitted": 2
+  },
   "warnings": [
     "Scheduler-issued peak is not observed host concurrency.",
+    "Evidence hashes are declarations; this tool does not fetch or authenticate their source bytes.",
+    "Declared-data arithmetic is not an empirical performance claim.",
     "Break-even claims require a preregistered scale series and uncertainty analysis."
   ],
   "wins_ties_losses": {

@@ -25,11 +25,11 @@ This map is the public evidence index for protocol `1.4.0`, schema `2`, and tool
 | Resource symlink swaps freeze launch | `verify_resource_bindings` at claim/launch | `TestResources.test_symlink_swap_cannot_rebind_claimed_resource` |
 | Both ledger/journal crash windows recover safely | intent/commit WAL classification and repair | `TestAtomicPersistence`, `TestHardening.test_torn_journal_tail_is_safely_auto_repaired` |
 | Resume advice is conservative and state-bound | `doctor` badge/manifest/resume token | `TestDoctor.test_doctor_reports_badge_artifacts_and_resume_token` |
-| Status HTML is escaped, deterministic, offline, and exact-file atomic | `render_status_html`, `write_status_html`, `render-status` | `TestDoctor.test_status_html_is_escaped_deterministic_and_atomic`, `TestCli.test_cli_end_to_end` |
-| Optional frozen contracts bind exact node/base/ownership fields | `swarm_contract.py`, `create-node --frozen-contract`, fingerprint `inputs_digest` | `TestFrozenContract`, `TestFrozenContractBinding` |
-| Independent frozen write scopes cannot overlap | contract graph reachability and resource-prefix checks | `TestFrozenContract.test_resource_overlap_requires_dependency_order` |
-| Benchmark speed uses gate-passing paired evidence and retains failures | `swarm_benchmark.py compare` | `TestSwarmBenchmark.test_examples_validate_and_report_replays`, `test_failures_and_missing_arms_remain_visible` |
-| Issued peak is not relabeled observed; missing telemetry/usage stays unknown | benchmark trial validator and report coverage | `TestSwarmBenchmark.test_trial_evidence_truth_guards`, `test_known_usage_and_observed_telemetry_are_explicit` |
+| Status HTML is escaped, deterministic, offline, exact-file atomic, and exposes unsafe journal state | `render_status_html`, `write_status_html`, `render-status` | `TestDoctor.test_status_html_is_escaped_deterministic_and_atomic`, `TestCli.test_cli_end_to_end` |
+| Optional frozen contracts bind one exact run-wide contract before the first node | immutable binding sidecar, `create-node --frozen-contract`, fingerprint `inputs_digest` | `TestFrozenContractBinding.test_create_node_binds_exact_frozen_contract_digest`, `test_contract_mode_cannot_start_after_an_unbound_node` |
+| Independent frozen write scopes cannot overlap; dense DAG validation stays bounded | polynomial dependency closure and resource-prefix checks | `TestFrozenContract.test_resource_overlap_requires_dependency_order`, `test_dense_128_node_dag_is_bounded_and_valid` |
+| Benchmark diagnostics enforce the preregistered pair plan, reject post-hoc exclusions/reused timing evidence, and retain per-arm failures | `swarm_benchmark.py compare` | `TestSwarmBenchmark.test_preregistered_pair_order_and_exclusion_are_enforced`, `test_failures_and_missing_arms_remain_visible` |
+| Issued peak is not relabeled observed; token/credit/telemetry coverage stays separate and declared hashes stay unverified | benchmark trial validator and report coverage/status | `TestSwarmBenchmark.test_trial_evidence_truth_guards`, `test_known_usage_and_observed_telemetry_are_explicit`, `TestPublishedSchemas` |
 | Conservative concurrency defaults remain 4 read-only / 3 isolated / 1 shared, unknown host peak 3 | `SCHEDULING.md`, `ROUTES.md`, hygiene guard | `TestRepoHygiene.test_conservative_concurrency_defaults_are_preserved` |
 | Marketplace has one canonical packaged skill with preserved credit | marketplace/plugin tree and hygiene guards | `TestRepoHygiene.test_marketplace_plugin_tree_is_single_source_and_valid`, `test_release_contract_consistency` |
 | Specialist profiles cannot delegate, mutate the ledger, or silently pin routes | project `.codex/agents` profiles | `TestRepoHygiene.test_project_agent_profiles_are_narrow_and_portable` |
@@ -55,4 +55,6 @@ python3 -m coverage combine
 python3 -m coverage report
 ```
 
-All shipped runtime tools remain Python-standard-library-only. `coverage` is used only to measure the tests in CI.
+All shipped runtime tools remain Python-standard-library-only. `coverage` and
+`jsonschema` are pinned development-only dependencies used by CI for branch
+coverage and Draft 2020-12 example/schema validation.

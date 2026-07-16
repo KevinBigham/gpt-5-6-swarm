@@ -1054,6 +1054,13 @@ class TestDoctor(LedgerHarness):
             self.assertEqual(handle.read(), first)
         self.expect(sl.EXIT_USAGE, sl.write_status_html,
                     os.path.join(self.dir, "missing", "status.html"), first)
+        os.remove(sl.journal_path(self.dir, self.RUN))
+        unsafe_report = sl.op_doctor(self.dir, self.RUN)
+        unsafe_html = sl.render_status_html(
+            sl.load_ledger(self.dir, self.RUN), unsafe_report)
+        self.assertIn("JOURNAL AMBIGUITY", unsafe_html)
+        self.assertIn("Status: <strong>absent</strong>", unsafe_html)
+        self.assertNotIn("No recorded violations or ambiguity", unsafe_html)
         link = os.path.join(self.dir, "status-link.html")
         try:
             os.symlink(output, link)
@@ -1089,11 +1096,35 @@ class TestFrozenContractBinding(LedgerHarness):
         node = sl.load_ledger(self.dir, self.RUN)["nodes"]["contract.scan#1"]
         self.assertEqual(node["fingerprint_inputs"]["inputs_digest"],
                          envelope["contract_sha256"])
+        binding = sl.safe_load_json(
+            sl.frozen_contract_binding_path(self.dir, self.RUN),
+            sl.FROZEN_BINDING_MAX_BYTES)
+        self.assertEqual(binding["contract_sha256"],
+                         envelope["contract_sha256"])
         err = self.expect(
             sl.EXIT_SEMANTIC, self.create, "contract.other",
             outcome="other work", gate="changed gate", base="rev-contract",
             frozen_contract_file=path)
         self.assertIn("frozen contract refused node", err.message)
+
+        mixed_contract = copy.deepcopy(contract)
+        mixed_contract["nodes"][1]["outcome"] = "different scan plan"
+        mixed_envelope = sc.freeze_contract(mixed_contract)
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(mixed_envelope, handle)
+        err = self.expect(
+            sl.EXIT_SEMANTIC, self.create, "contract.other",
+            outcome="other work", gate="other gate", base="rev-contract",
+            frozen_contract_file=path)
+        self.assertIn("differs from the contract already bound", err.message)
+
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(envelope, handle)
+        self.create("contract.other", outcome="other work", gate="other gate",
+                    base="rev-contract", frozen_contract_file=path)
+        err = self.expect(sl.EXIT_SEMANTIC, self.create, "unbound.after",
+                          outcome="unbound work")
+        self.assertIn("every node must supply", err.message)
 
         wrong_run = copy.deepcopy(envelope)
         wrong_run["contract"]["run_id"] = "different-run"
@@ -1105,6 +1136,33 @@ class TestFrozenContractBinding(LedgerHarness):
             outcome="other work", gate="other gate", base="rev-contract",
             frozen_contract_file=path)
         self.assertIn("run_id does not match contract", err.message)
+
+        os.remove(sl.frozen_contract_binding_path(self.dir, self.RUN))
+        err = self.expect(sl.EXIT_CORRUPT, self.create, "after.deletion",
+                          outcome="must fail closed")
+        self.assertIn("sidecar was removed", err.message)
+
+    def test_contract_mode_cannot_start_after_an_unbound_node(self):
+        self.create("plain.first", outcome="plain work")
+        contract = {
+            "contract_version": 1, "run_id": self.RUN,
+            "task_digest": "digest-of-task", "base_revision": "rev-contract",
+            "protected_paths": [".git"],
+            "nodes": [{
+                "node_id": "bound.late", "class": "PURE",
+                "model": "gpt-5.6-luna", "effort": "low",
+                "outcome": "late bound work", "gate": "report delivered",
+                "dependencies": [], "join": "all", "resources": [],
+            }],
+        }
+        path = os.path.join(self.dir, "late-contract.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(sc.freeze_contract(contract), handle)
+        err = self.expect(
+            sl.EXIT_SEMANTIC, self.create, "bound.late",
+            outcome="late bound work", base="rev-contract",
+            frozen_contract_file=path)
+        self.assertIn("first node", err.message)
 
 # ---------------------------------------------------------------------------
 # Required scenario 15: valid PURE parallel work

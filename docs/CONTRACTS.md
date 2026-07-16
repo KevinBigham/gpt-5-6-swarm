@@ -5,7 +5,10 @@ before worker creation. It is optional: ordinary ledger use remains valid.
 When enabled, `create-node --frozen-contract` refuses any node whose class,
 route request, outcome, gate, dependencies, join, resources, or base revision
 differs from the frozen plan. The contract SHA-256 becomes the node's
-`inputs_digest`, so the existing task fingerprint binds the plan.
+`inputs_digest`, so the existing task fingerprint binds the plan. The first
+bound node also creates an immutable run sidecar under `.swarm/runs/<run-id>/`;
+later node creation refuses a different contract or an unbound node. Contract
+mode cannot be enabled after an unbound node already exists.
 
 This is a coordinator consistency gate, not an external lock. It does not
 prove the host selected a model, prevent an uncooperative writer, grant
@@ -32,7 +35,8 @@ python3 "$S/swarm_ledger.py" create-node \
 `freeze` rejects duplicate keys, extra fields, noncanonical paths/resources,
 cycles, invalid joins, `PURE` mutation scopes, mutation nodes without scopes,
 protected-path ownership, and overlapping resources between independent nodes.
-Overlap is allowed only when dependency order serializes the owners.
+Dense graphs use bounded polynomial-time cycle/reachability checks. Overlap is
+allowed only when dependency order serializes the owners.
 
 After a worker returns a diff, audit each changed path against that node's
 frozen path ownership:

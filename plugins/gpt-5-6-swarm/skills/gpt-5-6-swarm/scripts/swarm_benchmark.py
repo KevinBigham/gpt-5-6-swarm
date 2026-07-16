@@ -237,32 +237,69 @@ def validate_trial(trial, case=None):
         requirement = case["runtime"]["routing_requirement"]
         if trial["routing_status"] != requirement:
             raise BenchmarkError("trial routing does not match case")
+        planned = {(item["pair_id"], item["replicate"]): item
+                   for item in _planned_pairs(case)}
+        identity = (trial["pair_id"], trial["replicate"])
+        if identity not in planned:
+            raise BenchmarkError("trial pair/replicate was not preregistered")
+        expected_pair = planned[identity]
+        if trial["order"] != expected_pair["order"] or \
+                trial["warmup"] != expected_pair["warmup"]:
+            raise BenchmarkError("trial order/warmup does not match plan")
+        allowed_exclusions = case["pairing"]["preregistered_exclusions"]
+        if trial["exclusion_reason"] is not None and \
+                trial["exclusion_reason"] not in allowed_exclusions:
+            raise BenchmarkError("trial exclusion was not preregistered")
     return trial
 
 
-def make_plan(case):
-    validate_case(case)
+def _planned_pairs(case):
     pairing = case["pairing"]
     total = pairing["warmups"] + pairing["measured_pairs"]
     orders = ["AB" if index % 2 == 0 else "BA" for index in range(total)]
     random.Random(pairing["order_seed"]).shuffle(orders)
-    return {
-        "case_sha256": case_digest(case),
-        "pairs": [{
+    return [{
             "pair_id": "pair-{:03d}".format(index + 1),
             "replicate": index + 1,
             "order": order,
             "warmup": index < pairing["warmups"],
-        } for index, order in enumerate(orders)],
+        } for index, order in enumerate(orders)]
+
+
+def make_plan(case):
+    validate_case(case)
+    return {"case_sha256": case_digest(case), "pairs": _planned_pairs(case)}
+
+
+def _arm_record(trial):
+    if trial is None:
+        return None
+    return {
+        "trial_id": trial["trial_id"],
+        "terminal_status": trial["terminal_status"],
+        "acceptance_passed": trial["acceptance_passed"],
+        "duration_ns": trial["duration_ns"],
+        "exclusion_reason": trial["exclusion_reason"],
+        "unknowns": trial["unknowns"],
+        "retries": trial["retries"],
+        "scheduler_issued_peak": trial["scheduler_issued_peak"],
+        "observed_peak": trial["observed_peak"],
+        "evidence": dict(trial["evidence"]),
     }
 
 
 def compare_trials(case, trials):
     validate_case(case)
     seen = set()
-    groups = {}
-    arm_counts = {arm: {"total": 0, "passed": 0, "unknown": 0}
-                  for arm in ("serial", "swarm")}
+    plan = _planned_pairs(case)
+    groups = {(item["pair_id"], item["replicate"]): {
+        "plan": item, "arms": {}} for item in plan}
+    statuses = ("SUCCEEDED", "FAILED", "ABORTED", "CANCELED", "UNKNOWN")
+    arm_counts = {arm: {
+        "total": 0, "passed": 0,
+        "terminal_statuses": {status: 0 for status in statuses},
+    } for arm in ("serial", "swarm")}
+    unique_evidence = {"timing": {}, "gate_log": {}}
     for trial in trials:
         validate_trial(trial, case)
         if trial["trial_id"] in seen:
@@ -271,21 +308,31 @@ def compare_trials(case, trials):
         counts = arm_counts[trial["arm"]]
         counts["total"] += 1
         counts["passed"] += int(trial["acceptance_passed"])
-        counts["unknown"] += int(trial["terminal_status"] == "UNKNOWN")
-        group = groups.setdefault((trial["pair_id"], trial["replicate"]), {})
-        if trial["arm"] in group:
+        counts["terminal_statuses"][trial["terminal_status"]] += 1
+        for evidence_key in unique_evidence:
+            digest = trial["evidence"][evidence_key]
+            if digest in unique_evidence[evidence_key]:
+                raise BenchmarkError(
+                    "reused {} evidence across trials: {} and {}".format(
+                        evidence_key, unique_evidence[evidence_key][digest],
+                        trial["trial_id"]))
+            unique_evidence[evidence_key][digest] = trial["trial_id"]
+        group = groups[(trial["pair_id"], trial["replicate"])]
+        if trial["arm"] in group["arms"]:
             raise BenchmarkError("duplicate arm in pair: " +
                                  trial["pair_id"] + "/" + trial["arm"])
-        group[trial["arm"]] = trial
+        group["arms"][trial["arm"]] = trial
 
     eligible = []
     ineligible = []
     for key in sorted(groups):
-        pair = groups[key]
+        group = groups[key]
+        pair = group["arms"]
+        planned = group["plan"]
         reason = None
         if set(pair) != {"serial", "swarm"}:
             reason = "missing arm"
-        elif pair["serial"]["warmup"] or pair["swarm"]["warmup"]:
+        elif planned["warmup"]:
             reason = "warmup"
         else:
             serial, swarm = pair["serial"], pair["swarm"]
@@ -304,69 +351,118 @@ def compare_trials(case, trials):
             elif serial["exclusion_reason"] or swarm["exclusion_reason"]:
                 reason = "preregistered exclusion"
         if reason:
-            ineligible.append({"pair_id": key[0], "replicate": key[1],
-                               "reason": reason})
+            ineligible.append({
+                "pair_id": key[0], "replicate": key[1],
+                "order": planned["order"], "warmup": planned["warmup"],
+                "reason": reason,
+                "arms": {
+                    "serial": _arm_record(pair.get("serial")),
+                    "swarm": _arm_record(pair.get("swarm")),
+                },
+            })
             continue
         serial, swarm = pair["serial"], pair["swarm"]
         eligible.append({
             "pair_id": key[0], "replicate": key[1],
+            "order": planned["order"],
+            "serial_trial_id": serial["trial_id"],
+            "swarm_trial_id": swarm["trial_id"],
             "serial_duration_ns": serial["duration_ns"],
             "swarm_duration_ns": swarm["duration_ns"],
             "savings_ns": serial["duration_ns"] - swarm["duration_ns"],
-            "speedup": serial["duration_ns"] / swarm["duration_ns"],
+            "declared_ratio": serial["duration_ns"] / swarm["duration_ns"],
         })
 
-    ratios = [item["speedup"] for item in eligible]
+    measured_ineligible = [item for item in ineligible if not item["warmup"]]
+    summary_ready = len(eligible) == case["pairing"]["measured_pairs"] and \
+        not measured_ineligible
+    ratios = [item["declared_ratio"] for item in eligible]
     savings = [item["savings_ns"] for item in eligible]
     observed = [trial for trial in trials if trial["observed_peak"] is not None]
-    usage_complete = all(
-        trial["usage"]["input_tokens"] is not None and
-        trial["usage"]["output_tokens"] is not None
-        for trial in trials) if trials else False
+    usage_coverage = {
+        "input_tokens_declared": sum(
+            trial["usage"]["input_tokens"] is not None for trial in trials),
+        "output_tokens_declared": sum(
+            trial["usage"]["output_tokens"] is not None for trial in trials),
+        "credits_declared": sum(
+            trial["usage"]["credits"] is not None for trial in trials),
+        "total_submitted": len(trials),
+    }
     return {
         "benchmark_report_version": 1,
         "case_sha256": case_digest(case),
         "track": case["track"],
+        "evidence_status": "declared_hashes_unverified",
+        "summary_status": ("complete_declared_data" if summary_ready else
+                           "withheld_incomplete_or_ineligible"),
         "planned_measured_pairs": case["pairing"]["measured_pairs"],
         "eligible_pairs": eligible,
         "ineligible_pairs": ineligible,
         "arm_counts": arm_counts,
-        "median_paired_speedup": statistics.median(ratios) if ratios else None,
-        "median_paired_savings_ns": statistics.median(savings) if savings else None,
+        "declared_median_paired_speedup": (
+            statistics.median(ratios) if summary_ready else None),
+        "declared_median_paired_savings_ns": (
+            statistics.median(savings) if summary_ready else None),
         "wins_ties_losses": {
             "wins": sum(value > 1 for value in ratios),
             "ties": sum(value == 1 for value in ratios),
             "losses": sum(value < 1 for value in ratios),
         },
         "observed_peak_coverage": {
-            "known": len(observed), "total": len(trials)},
-        "usage_complete": usage_complete,
+            "declared_known": len(observed),
+            "total_submitted": len(trials),
+        },
+        "usage_coverage": usage_coverage,
+        "evidence_coverage": {
+            "declared_hashes": len(trials) * len(EVIDENCE_KEYS),
+            "content_verified": 0,
+            "total_expected": len(trials) * len(EVIDENCE_KEYS),
+        },
         "break_even_status": "insufficient_evidence",
         "warnings": [
             "Scheduler-issued peak is not observed host concurrency.",
+            "Evidence hashes are declarations; this tool does not fetch or "
+            "authenticate their source bytes.",
+            "Declared-data arithmetic is not an empirical performance claim.",
             "Break-even claims require a preregistered scale series and uncertainty analysis.",
         ],
     }
 
 
 def render_markdown(report):
-    speedup = report["median_paired_speedup"]
+    speedup = report["declared_median_paired_speedup"]
     speedup_text = "UNKNOWN" if speedup is None else "{:.3f}x".format(speedup)
     lines = [
-        "# Swarm benchmark report", "",
+        "# Swarm declared-data diagnostic — not benchmark evidence", "",
         "- Track: `{}`".format(report["track"]),
+        "- Evidence status: `{}`".format(report["evidence_status"]),
+        "- Summary status: `{}`".format(report["summary_status"]),
         "- Valid pairs: `{}/{}`".format(
             len(report["eligible_pairs"]), report["planned_measured_pairs"]),
-        "- Median paired speedup: `{}`".format(speedup_text),
+        "- Declared-data median paired ratio: `{}`".format(speedup_text),
         "- Break-even status: `{}`".format(report["break_even_status"]),
-        "", "| Pair | Serial ns | Swarm ns | Speedup |", "|---|---:|---:|---:|",
+        "", "| Pair | Serial ns | Swarm ns | Declared ratio |",
+        "|---|---:|---:|---:|",
     ]
     for item in report["eligible_pairs"]:
         lines.append("| {} | {} | {} | {:.3f}x |".format(
             item["pair_id"], item["serial_duration_ns"],
-            item["swarm_duration_ns"], item["speedup"]))
+            item["swarm_duration_ns"], item["declared_ratio"]))
     if not report["eligible_pairs"]:
         lines.append("| — | — | — | UNKNOWN |")
+    lines.extend(["", "## Ineligible and warmup pairs", "",
+                  "| Pair | Serial status | Swarm status | Reason |",
+                  "|---|---|---|---|"])
+    for item in report["ineligible_pairs"]:
+        serial = item["arms"]["serial"]
+        swarm = item["arms"]["swarm"]
+        lines.append("| {} | {} | {} | {} |".format(
+            item["pair_id"],
+            serial["terminal_status"] if serial else "MISSING",
+            swarm["terminal_status"] if swarm else "MISSING",
+            item["reason"]))
+    if not report["ineligible_pairs"]:
+        lines.append("| — | — | — | none |")
     lines.extend(["", "## Warnings", ""] +
                  ["- " + warning for warning in report["warnings"]])
     return "\n".join(lines) + "\n"

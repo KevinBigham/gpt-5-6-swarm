@@ -140,6 +140,8 @@ LEGAL_TRANSITIONS = {
 LEDGER_MAX_BYTES = 5_000_000
 RECEIPT_MAX_BYTES = 512_000
 AUTHORIZATION_MAX_BYTES = 32_000
+FROZEN_BINDING_MAX_BYTES = 4_096
+FROZEN_BINDING_VERSION = 1
 MAX_JSON_DEPTH = 64
 MAX_TEXT_FIELD = 4_000
 IGNORED_BASELINE_MAX_FILE_BYTES = 50_000_000
@@ -666,6 +668,10 @@ def lock_dir(root: str, run_id: str) -> str:
     return os.path.join(run_dir(root, run_id), "lock")
 
 
+def frozen_contract_binding_path(root: str, run_id: str) -> str:
+    return os.path.join(run_dir(root, run_id), "frozen-contract-binding.json")
+
+
 def acquire_lock(root: str, run_id: str, writer: str) -> str:
     path = lock_dir(root, run_id)
     try:
@@ -809,6 +815,109 @@ def atomic_write_ledger(root: str, run_id: str, ledger: dict) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _atomic_write_run_json(root: str, run_id: str, filename: str,
+                           payload: dict) -> None:
+    """Atomically create one bounded run sidecar while the run lock is held."""
+    parent = ensure_runtime_directory(root, run_id)
+    target = os.path.join(parent, filename)
+    body = json.dumps(payload, sort_keys=True, indent=2).encode("utf-8") + b"\n"
+    if len(body) > FROZEN_BINDING_MAX_BYTES:
+        raise LedgerError(EXIT_SEMANTIC, "run sidecar exceeds size cap")
+    if os.path.lexists(target):
+        info = os.lstat(target)
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+            raise LedgerError(EXIT_CORRUPT,
+                              "run sidecar must be a regular non-symlink")
+    fd, temporary = tempfile.mkstemp(prefix=filename + ".tmp.", dir=parent)
+    try:
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "wb") as handle:
+            fd = -1
+            handle.write(body)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, target)
+    except Exception:
+        if fd >= 0:
+            os.close(fd)
+        try:
+            os.remove(temporary)
+        except OSError:
+            pass
+        raise
+
+
+def bind_frozen_contract(root: str, run_id: str, ledger: dict,
+                         contract_digest: str = None) -> None:
+    """Bind exactly one frozen contract to a run before its first node.
+
+    The immutable sidecar avoids changing ledger schema 2. Creation and
+    checking happen under the canonical run lock, so concurrent creators
+    cannot select different contracts or mix bound and unbound nodes.
+    """
+    path = frozen_contract_binding_path(root, run_id)
+    historic_digests = journal_frozen_contract_digests(root, run_id)
+    if len(historic_digests) > 1:
+        raise LedgerError(EXIT_CORRUPT,
+                          "journal records multiple frozen contracts")
+    historic = next(iter(historic_digests), None)
+    expected_keys = {
+        "binding_version", "run_id", "task_digest", "contract_sha256",
+    }
+    if os.path.lexists(path):
+        binding = safe_load_json(path, FROZEN_BINDING_MAX_BYTES)
+        if set(binding) != expected_keys or \
+                binding.get("binding_version") != FROZEN_BINDING_VERSION:
+            raise LedgerError(EXIT_CORRUPT,
+                              "frozen-contract binding sidecar is malformed")
+        if binding.get("run_id") != run_id or \
+                binding.get("task_digest") != ledger["task"]["description_digest"]:
+            raise LedgerError(EXIT_CORRUPT,
+                              "frozen-contract binding identity is corrupted")
+        recorded = binding.get("contract_sha256")
+        if not isinstance(recorded, str) or not HEX64_RE.fullmatch(recorded):
+            raise LedgerError(EXIT_CORRUPT,
+                              "frozen-contract binding digest is invalid")
+        if historic is not None and recorded != historic:
+            raise LedgerError(EXIT_CORRUPT,
+                              "frozen-contract sidecar disagrees with journal")
+        if ledger["nodes"] and historic is None:
+            raise LedgerError(EXIT_CORRUPT,
+                              "unexpected frozen-contract sidecar for a run "
+                              "with unbound node history")
+        if contract_digest is None:
+            raise LedgerError(
+                EXIT_SEMANTIC,
+                "this run is frozen-contract-bound; every node must supply "
+                "the same --frozen-contract")
+        if recorded != contract_digest:
+            raise LedgerError(
+                EXIT_SEMANTIC,
+                "frozen contract differs from the contract already bound "
+                "to this run")
+        return
+    if historic is not None:
+        raise LedgerError(EXIT_CORRUPT,
+                          "frozen-contract binding sidecar was removed")
+    if contract_digest is None:
+        return
+    if ledger["nodes"]:
+        raise LedgerError(
+            EXIT_SEMANTIC,
+            "frozen-contract mode must be enabled on the run's first node; "
+            "it cannot be added after unbound nodes exist")
+    if not isinstance(contract_digest, str) or not HEX64_RE.fullmatch(
+            contract_digest):
+        raise LedgerError(EXIT_CORRUPT, "frozen contract digest is invalid")
+    _atomic_write_run_json(root, run_id, "frozen-contract-binding.json", {
+        "binding_version": FROZEN_BINDING_VERSION,
+        "run_id": run_id,
+        "task_digest": ledger["task"]["description_digest"],
+        "contract_sha256": contract_digest,
+    })
+
+
 def journal_append(root: str, run_id: str, entry: dict) -> None:
     line = json.dumps(entry, sort_keys=True) + "\n"
     path = journal_path(root, run_id)
@@ -875,6 +984,48 @@ def scan_journal(root: str, run_id: str):
             last = entry
             last_good += len(raw)
     return last, issue, last_good
+
+
+def journal_frozen_contract_digests(root: str, run_id: str):
+    """Read immutable contract digests recorded in create-node journal rows."""
+    path = journal_path(root, run_id)
+    if not os.path.lexists(path):
+        return set()
+    _lstat_regular(path, "audit journal")
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NONBLOCK"):
+        flags |= os.O_NONBLOCK
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        fd = os.open(path, flags)
+    except OSError as exc:
+        raise LedgerError(EXIT_CORRUPT,
+                          f"cannot safely inspect journal contracts: {exc}")
+    digests = set()
+    with os.fdopen(fd, "rb") as handle:
+        if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+            raise LedgerError(EXIT_CORRUPT,
+                              "audit journal must be a regular file")
+        for raw in handle:
+            try:
+                entry = json.loads(
+                    raw.decode("utf-8"),
+                    object_pairs_hook=_reject_duplicate_keys,
+                    parse_constant=_reject_json_constant)
+            except (UnicodeDecodeError, json.JSONDecodeError, LedgerError):
+                raise LedgerError(EXIT_CORRUPT,
+                                  "cannot trust malformed journal contract history")
+            detail = entry.get("detail") if isinstance(entry, dict) else None
+            digest = detail.get("frozen_contract_sha256") \
+                if isinstance(detail, dict) else None
+            if digest is None:
+                continue
+            if not isinstance(digest, str) or not HEX64_RE.fullmatch(digest):
+                raise LedgerError(EXIT_CORRUPT,
+                                  "journal frozen-contract digest is invalid")
+            digests.add(digest)
+    return digests
 
 
 def journal_last_anchor(root: str, run_id: str):
@@ -1624,6 +1775,7 @@ def op_create_node(root, run_id, writer, expect_generation, *, node_id,
         raise LedgerError(EXIT_SEMANTIC,
                           "intentional duplicate groups are PURE-only")
     scope_ids = [f"{r['type']}:{r['id']}" for r in parsed_resources]
+    contract_digest = None
     if frozen_contract_file:
         bound_ledger = load_ledger(root, run_id)
         contract_path = os.path.join(os.path.dirname(__file__),
@@ -1802,6 +1954,7 @@ def op_create_node(root, run_id, writer, expect_generation, *, node_id,
                 EXIT_SEMANTIC,
                 f"--supersedes {supersedes!r} must identify the CURRENT "
                 "artifact with the same fingerprint")
+        bind_frozen_contract(root, run_id, ledger, contract_digest)
         key = node_key(node_id, attempt)
         node = {
             "node_id": node_id, "attempt": attempt, "class": klass,
@@ -1836,7 +1989,10 @@ def op_create_node(root, run_id, writer, expect_generation, *, node_id,
         if authorization:
             ledger["nonces"]["authorization"][
                 authorization["authorization_nonce"]] = key
-        return {"node": key, "fingerprint": fingerprint}
+        detail = {"node": key, "fingerprint": fingerprint}
+        if contract_digest:
+            detail["frozen_contract_sha256"] = contract_digest
+        return detail
 
     return mutate(root, run_id, writer, expect_generation, "create-node",
                   mutator)
@@ -3246,6 +3402,13 @@ def render_status_html(ledger, report):
     for item in report["in_flight_ambiguity"]:
         issue_rows.append("<li><strong>IN FLIGHT</strong> {}: {}</li>".format(
             esc(item["node"]), esc(item["kind"])))
+    journal = report["journal"]
+    journal_safe = journal["status"] == "anchored" or \
+        journal["status"].startswith("recoverable-")
+    if not journal_safe:
+        issue_rows.append(
+            "<li><strong>JOURNAL AMBIGUITY</strong> {}: {}</li>".format(
+                esc(journal["status"]), esc(journal["reason"])))
     if not issue_rows:
         issue_rows.append("<li>No recorded violations or ambiguity.</li>")
 
@@ -3281,6 +3444,8 @@ th {{ background: #7772; }} code {{ overflow-wrap: anywhere; }}
 <h2>Capability boundary</h2>
 <p>Tier: <strong>{tier}</strong><br>Disabled: {disabled}<br>
 <span class="muted">{capability_evidence}</span></p>
+<h2>Journal integrity</h2>
+<p>Status: <strong>{journal_status}</strong><br>{journal_reason}</p>
 <h2>Graph</h2>
 <table><thead><tr><th>Node</th><th>State</th><th>Class</th><th>Route</th>
 <th>Dependencies</th><th>Resources</th><th>Outcome</th><th>Gate</th>
@@ -3302,6 +3467,8 @@ authenticate receipts, or verify external effects.</p>
         schema=esc(ledger["schema_version"]), summary=esc(summary),
         tier=esc(profile["tier"]), disabled=esc(disabled),
         capability_evidence=esc(report["capability_evidence"]),
+        journal_status=esc(journal["status"]),
+        journal_reason=esc(journal["reason"]),
         node_rows="".join(node_rows), artifact_rows="".join(artifact_rows),
         issue_rows="".join(issue_rows),
         resumable=esc(report["resume"]["resumable"]), token=esc(token))

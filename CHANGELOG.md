@@ -27,6 +27,15 @@ promised.
 - Added preregistered paired benchmark case/trial/report formats, deterministic
   validation and comparison, anti-gaming methodology, and honest engineering
   case studies. No general speedup or break-even claim is made.
+- Hardened the release candidate after independent review: one immutable
+  contract now binds an entire run before its first node; dense 128-node DAGs
+  validate in polynomial time; malformed types fail through controlled errors;
+  status HTML exposes unsafe journal state; benchmark trials must match the
+  exact preregistered plan; incomplete or excluded data withholds the median;
+  failures and declared coverage remain visible; and every report is stamped
+  as source-bytes-unverified.
+- Added executable Draft 2020-12 positive/negative validation for contract and
+  benchmark examples as a pinned development-only CI gate.
 - Kept the default concurrency ceilings unchanged: four read-only lanes, three
   isolated writers, one overlapping/shared writer, and a conservative peak of
   three when host capacity is unknown.

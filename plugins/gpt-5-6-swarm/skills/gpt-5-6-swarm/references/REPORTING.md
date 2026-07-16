@@ -92,7 +92,9 @@ For a durable local operator view, run `swarm_ledger.py render-status` and save
 stdout or pass one exact `--output` path. The page is static, dependency-free,
 and HTML-escapes ledger content. It shows recorded graph state, capability
 limits, artifacts, ambiguity, and resume status. It does not observe live host
-threads or upgrade scheduler-issued peak into observed concurrency.
+threads or upgrade scheduler-issued peak into observed concurrency. Journal
+status and reason are always visible; unsafe missing/mismatched journal state
+also appears as explicit ambiguity rather than only disabling the resume token.
 
 ## Fan-in review
 
@@ -124,6 +126,8 @@ Also state:
 
 Never report the planned graph as the route actually run.
 
-Performance reports additionally follow `EVALUATION.md`: name the benchmark
-track, show valid/total pairs and failures, separate requested/issued/observed
-peak, keep missing usage `UNKNOWN`, and label example data as illustrative.
+Performance diagnostics additionally follow `EVALUATION.md`: name the track,
+show valid/total pairs and per-arm failures, separate requested/issued/observed
+peak, keep missing usage `UNKNOWN`, stamp declared hashes as unverified, and
+label example data as illustrative. Comparator arithmetic alone is not
+empirical evidence.

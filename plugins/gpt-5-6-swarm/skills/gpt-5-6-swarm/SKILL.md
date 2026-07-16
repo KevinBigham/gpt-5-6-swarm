@@ -182,6 +182,8 @@ The run is not complete while any action is claimed, launching, preparing, armed
 
 If the task measures Swarm itself, use the paired evidence contract in
 `references/EVALUATION.md`. Example durations are never evidence; keep missing
-timing, usage, and observed concurrency explicitly unknown.
+timing, usage, and observed concurrency explicitly unknown. The offline
+diagnostic validates declarations and pair selection but does not authenticate
+source evidence bytes; never cite its arithmetic alone as an empirical claim.
 
 Lead the final response with the finished outcome. Include the actual—not planned—receipt: coordinator identity, total accounted children, worker thread IDs, models/efforts, artifacts, gates, worker count, scheduler-issued peak concurrency, integrations, escalations, invalidations, skipped lanes, external effects, and remaining risks. Call concurrency “observed” only when the host provides authoritative active-thread telemetry. Retain child records according to host and user policy; never archive user-visible records automatically.

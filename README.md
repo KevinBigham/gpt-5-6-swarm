@@ -88,8 +88,8 @@ Use $gpt-5-6-swarm in build mode with workers=6 and parallel=3: <task>
 - An optional frozen-contract gate that binds exact node fields and ownership
   into the existing task fingerprint without changing ledger schema 2.
 - An escaped, dependency-free `render-status` HTML view for operators.
-- A preregistered paired-benchmark evidence format, deterministic comparison
-  tool, and honest case-study publication template.
+- A preregistered paired-benchmark declared-record format, deterministic
+  anti-selection diagnostic, and honest case-study publication template.
 - Eight narrow project-scoped specialist profiles for contributors; the plugin
   format does not install or prove selection of those profiles.
 
@@ -105,7 +105,11 @@ python3 -m unittest discover -s tests   # offline, deterministic
 python3 plugins/gpt-5-6-swarm/skills/gpt-5-6-swarm/scripts/swarm_ledger.py verify-reference-set
 ```
 
-CI runs the offline suite across Python 3.9/3.11/3.13 on Ubuntu, Python 3.11 on Windows and macOS, plus a published branch-aware coverage gate for the ledger. See [the invariant-to-test map](docs/INVARIANTS.md), [operator runbook](docs/RUNBOOK.md), and [development roadmap](docs/ROADMAP.md).
+CI runs the offline suite across Python 3.9/3.11/3.13 on Ubuntu, Python 3.11 on
+Windows and macOS, plus branch-aware coverage across all three runtime tools
+and Draft 2020-12 schema/example validation. See [the invariant-to-test
+map](docs/INVARIANTS.md), [operator runbook](docs/RUNBOOK.md), and [development
+roadmap](docs/ROADMAP.md).
 
 See [ENFORCEMENT.md](plugins/gpt-5-6-swarm/skills/gpt-5-6-swarm/references/ENFORCEMENT.md) for the lifecycle, scope boundary, exit codes, recovery, and versioning contract; [SCHEDULING.md](plugins/gpt-5-6-swarm/skills/gpt-5-6-swarm/references/SCHEDULING.md) for bounded concurrency; [HOSTS.md](plugins/gpt-5-6-swarm/skills/gpt-5-6-swarm/references/HOSTS.md) for verified host capabilities versus gated experiments. The prompt-only workflow remains available when command execution or permission for control-plane state writes is absent.
 
@@ -116,7 +120,9 @@ Swarm publishes [engineering case studies](case-studies/README.md) and a
 a general speedup or break-even point. Example durations are illustrative, not
 measurements. `scheduler_issued_peak` is never relabeled as observed host
 concurrency, and missing timing, token, credit, or telemetry values remain
-`UNKNOWN`.
+`UNKNOWN`. The offline comparator validates declared hashes and preregistered
+pair structure; it does not fetch or authenticate the source evidence bytes,
+so its arithmetic cannot support an empirical claim by itself.
 
 ## Safety model
 

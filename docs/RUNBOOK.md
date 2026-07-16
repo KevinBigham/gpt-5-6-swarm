@@ -19,7 +19,8 @@ Run `render-status --run-id RUN` for escaped offline HTML on stdout, or add
 `--output /exact/path/status.html` to atomically replace one regular file. The
 page is a view of the validated ledger and `doctor` report. It is not live
 thread telemetry and cannot turn scheduler-issued peak into observed
-concurrency.
+concurrency. Confirm the displayed journal status and reason; any unsafe
+missing or mismatched journal state appears under safety and ambiguity.
 
 ## Resolve `UNKNOWN`
 

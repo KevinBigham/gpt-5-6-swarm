@@ -16,6 +16,7 @@ Status: `DRAFT | REPRODUCED | SUPERSEDED`
 | Prompt / fixture / graph SHA-256 | |
 | Gate / evaluator SHA-256 | |
 | Track | `fixed_graph_scheduling` or `end_to_end_workflow` |
+| Source-evidence verification | verifier, method, and immutable result |
 
 ## Host and routing
 
@@ -55,7 +56,9 @@ size, open-fixture overfitting, and missing timing/usage/telemetry evidence.
 
 List hashes for every case, trial, ledger, journal, doctor report, gate log,
 timing receipt, telemetry receipt, and artifact. Include exact offline validation
-and comparison commands.
+and comparison commands plus the independent procedure that fetched and
+recomputed the named source bytes. A `declared_hashes_unverified` comparator
+report is a diagnostic, not measured evidence.
 
 ## Narrow conclusion
 

@@ -1,9 +1,11 @@
 # Benchmarking without fooling ourselves
 
-Swarm now ships an offline evidence format and comparison tool. It does **not**
-ship a headline speed claim. The current Codex host does not expose authoritative
-monotonic child timing or live-thread telemetry to this repository, so those
-facts must arrive as independently captured receipts or remain `UNKNOWN`.
+Swarm now ships an offline declared-record format and anti-selection
+diagnostic. It does **not** ship a headline speed claim or authenticate source
+evidence. The current Codex host does not expose authoritative monotonic child
+timing or live-thread telemetry to this repository, so those facts must arrive
+as independently captured and independently verified receipts or remain
+`UNKNOWN`.
 
 The files under `examples/benchmark-*.example.json` are sanitized format
 examples with illustrative numbers. They are not measurements and must never be
@@ -33,10 +35,17 @@ Pair the arms closely in time and restore the same fixture for every arm. The
 deterministic acceptance gate runs outside worker ownership. If scoring needs
 human judgment, blind the reviewer to the arm.
 
+The validator derives the exact planned `(pair_id, replicate, order, warmup)`
+map from the frozen case. Unplanned pairs, changed order/warmup flags, duplicate
+timing or gate evidence identities, and exclusion text not present in the
+preregistered allowlist are rejected.
+
 ## Evidence rules
 
 - Duration uses an authoritative monotonic host timing receipt in integer
-  nanoseconds. Ledger timestamps are UTC wall clock and are not benchmark timers.
+  nanoseconds. Ledger timestamps are UTC wall clock and are not benchmark
+  timers. The offline tool checks the declared receipt hash syntax and
+  uniqueness, not the receipt's source bytes or authority.
 - `scheduler_issued_peak` is the coordinator's issued peak. It is not observed
   concurrency.
 - `observed_peak` stays `null` unless authoritative active-thread telemetry and
@@ -47,10 +56,18 @@ human judgment, blind the reviewer to the arm.
 - The fixed-graph comparison rejects mismatched case, host, gate, routing,
   treatment, or evidence identity.
 
-Per-pair speedup is `serial_duration_ns / swarm_duration_ns`. The summary uses
-the median of paired ratios, not the ratio of aggregate means. It also reports
-paired savings, win/tie/loss counts, arm pass and `UNKNOWN` counts, issued-peak
-evidence, observed-peak coverage, and usage coverage.
+Per-pair declared-data ratio is `serial_duration_ns / swarm_duration_ns`. The
+diagnostic emits a median only when every preregistered measured pair has two
+successful, gate-passing, non-excluded arms. Missing, failed, `UNKNOWN`, or
+excluded measured pairs withhold the median instead of silently shrinking the
+sample. The report retains per-arm failure status and evidence identities, and
+separately reports declared observed-peak, token, and credit coverage.
+
+Every report is stamped `declared_hashes_unverified`. The tool does not fetch,
+recompute, authenticate, or semantically bind the source ledger, journal,
+doctor, gate, timing, usage, or telemetry bytes. Independently verify and
+publish those bytes before citing a result; comparator output alone is not
+empirical evidence.
 
 Break-even is specific to one case family, host, and date. A supported claim
 needs a preregistered scale series, enough valid pairs, no worse quality, and an
@@ -71,10 +88,13 @@ python3 "$T" compare examples/benchmark-case.example.json \
   examples/benchmark-swarm-trial.example.json --format markdown
 ```
 
-The schemas are informational mirrors of the executable validator:
+The Draft 2020-12 schemas validate the shipped examples and encode expressible
+shape/cross-field constraints in the development CI job:
 [case](../schema/benchmark-case.schema.json),
 [trial](../schema/benchmark-trial.schema.json), and
-[report](../schema/benchmark-report.schema.json).
+[report](../schema/benchmark-report.schema.json). The executable validator
+remains authoritative for pair-plan binding, evidence-identity uniqueness, and
+cross-record comparisons that JSON Schema cannot express.
 
 ## Publication checklist
 
@@ -82,4 +102,6 @@ Use the [case-study template](../case-studies/CASE_STUDY_TEMPLATE.md). Name the
 track, host, date, and valid/total pair count in the first sentence. Publish
 trial-by-trial failures and exclusions, requested/issued/observed concurrency as
 three separate fields, raw evidence hashes, exact reproduction commands,
-confounds, and a narrow conclusion. Never generalize from one host or case.
+confounds, independent source-byte verification, and a narrow conclusion.
+Never generalize from one host or case or cite the declared-data diagnostic by
+itself as measured evidence.

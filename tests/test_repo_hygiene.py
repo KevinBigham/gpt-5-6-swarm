@@ -226,6 +226,8 @@ class TestRepoHygiene(unittest.TestCase):
             "benchmark-case.schema.json").read_text("utf-8"))
         benchmark_trial_schema = json.loads((REPO_ROOT / "schema" /
             "benchmark-trial.schema.json").read_text("utf-8"))
+        benchmark_report_schema = json.loads((REPO_ROOT / "schema" /
+            "benchmark-report.schema.json").read_text("utf-8"))
         example = json.loads((REPO_ROOT / "examples" /
                               "ledger.example.json").read_text("utf-8"))
         node = next(iter(example["nodes"].values()))
@@ -253,10 +255,16 @@ class TestRepoHygiene(unittest.TestCase):
             "benchmark-case.example.json").read_text("utf-8"))
         benchmark_trial = json.loads((REPO_ROOT / "examples" /
             "benchmark-serial-trial.example.json").read_text("utf-8"))
+        benchmark_report = json.loads((REPO_ROOT / "examples" /
+            "benchmark-report.example.json").read_text("utf-8"))
         self.assertEqual(set(benchmark_case_schema["required"]),
                          set(benchmark_case))
         self.assertEqual(set(benchmark_trial_schema["required"]),
                          set(benchmark_trial))
+        self.assertEqual(set(benchmark_report_schema["required"]),
+                         set(benchmark_report))
+        self.assertEqual(set(benchmark_report_schema["properties"]),
+                         set(benchmark_report))
 
     def test_release_contract_consistency(self):
         import importlib.util
@@ -303,6 +311,8 @@ class TestRepoHygiene(unittest.TestCase):
         requirements = (REPO_ROOT / "requirements-dev.txt").read_text(
             "utf-8")
         self.assertRegex(requirements, r"(?m)^coverage==[0-9]+\.[0-9]+\.[0-9]+$")
+        self.assertRegex(requirements, r"(?m)^jsonschema==[0-9]+\.[0-9]+\.[0-9]+$")
+        self.assertRegex(requirements, r"(?m)^PyYAML==[0-9]+\.[0-9]+\.[0-9]+$")
         self.assertEqual((REPO_ROOT / "LICENSE").read_bytes(),
                          (SKILL_DIR / "LICENSE").read_bytes())
         for notice in (REPO_ROOT / "THIRD_PARTY_NOTICES.md",

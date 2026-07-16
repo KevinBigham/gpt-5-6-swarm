@@ -35,8 +35,9 @@ without manual re-anchoring; every new invariant has accepting/rejecting tests.
   installation or spawn selection of those profiles.
 - Add optional frozen-contract binding and changed-path ownership audits.
 - Add an escaped offline operator status page.
-- Publish paired benchmark schemas, an offline comparator, anti-gaming
-  methodology, and engineering case studies without inventing speed evidence.
+- Publish paired benchmark schemas, an offline declared-record diagnostic,
+  anti-selection methodology, and engineering case studies without inventing
+  or authenticating speed evidence.
 - Keep conservative concurrency ceilings unchanged until measured evidence
   justifies an experiment.
 

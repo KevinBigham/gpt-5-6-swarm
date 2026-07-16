@@ -36,9 +36,11 @@ class TestSwarmBenchmark(unittest.TestCase):
         expected = json.loads((REPO_ROOT / "examples" /
             "benchmark-report.example.json").read_text("utf-8"))
         self.assertEqual(actual, expected)
-        self.assertEqual(actual["median_paired_speedup"], 1.6)
+        self.assertEqual(actual["declared_median_paired_speedup"], 1.6)
+        self.assertEqual(actual["evidence_status"],
+                         "declared_hashes_unverified")
         self.assertEqual(actual["observed_peak_coverage"],
-                         {"known": 0, "total": 2})
+                         {"declared_known": 0, "total_submitted": 2})
         markdown = sb.render_markdown(actual)
         self.assertIn("1.600x", markdown)
         self.assertIn("not observed host concurrency", markdown)
@@ -63,10 +65,18 @@ class TestSwarmBenchmark(unittest.TestCase):
         self.assertEqual(report["eligible_pairs"], [])
         self.assertEqual(report["ineligible_pairs"][0]["reason"],
                          "non-success terminal state")
-        self.assertEqual(report["arm_counts"]["swarm"]["unknown"], 1)
+        self.assertEqual(
+            report["arm_counts"]["swarm"]["terminal_statuses"]["UNKNOWN"], 1)
+        self.assertIsNone(report["declared_median_paired_speedup"])
+        self.assertEqual(report["summary_status"],
+                         "withheld_incomplete_or_ineligible")
         report = sb.compare_trials(self.case, [self.serial])
         self.assertEqual(report["ineligible_pairs"][0]["reason"],
                          "missing arm")
+        self.assertEqual(
+            report["ineligible_pairs"][0]["arms"]["serial"]["trial_id"],
+            self.serial["trial_id"])
+        self.assertIsNone(report["ineligible_pairs"][0]["arms"]["swarm"])
 
     def test_pair_mismatch_and_duplicate_guards(self):
         mismatch = copy.deepcopy(self.swarm)
@@ -81,6 +91,37 @@ class TestSwarmBenchmark(unittest.TestCase):
         duplicate = copy.deepcopy(self.serial)
         with self.assertRaises(sb.BenchmarkError):
             sb.compare_trials(self.case, [self.serial, duplicate])
+
+        reused = copy.deepcopy(self.swarm)
+        reused["evidence"]["timing"] = self.serial["evidence"]["timing"]
+        with self.assertRaisesRegex(sb.BenchmarkError, "reused timing"):
+            sb.compare_trials(self.case, [self.serial, reused])
+
+    def test_preregistered_pair_order_and_exclusion_are_enforced(self):
+        hostile = []
+        value = copy.deepcopy(self.serial)
+        value["pair_id"] = "pair-999"
+        hostile.append(value)
+        value = copy.deepcopy(self.serial)
+        value["order"] = "BA"
+        hostile.append(value)
+        value = copy.deepcopy(self.serial)
+        value["warmup"] = True
+        hostile.append(value)
+        value = copy.deepcopy(self.serial)
+        value["exclusion_reason"] = "slow result"
+        hostile.append(value)
+        for trial in hostile:
+            with self.subTest(trial=trial), self.assertRaises(sb.BenchmarkError):
+                sb.validate_trial(trial, self.case)
+
+        allowed = copy.deepcopy(self.serial)
+        allowed["exclusion_reason"] = self.case["pairing"][
+            "preregistered_exclusions"][0]
+        report = sb.compare_trials(self.case, [allowed, self.swarm])
+        self.assertEqual(report["ineligible_pairs"][0]["reason"],
+                         "preregistered exclusion")
+        self.assertIsNone(report["declared_median_paired_speedup"])
 
     def test_trial_evidence_truth_guards(self):
         cases = []
@@ -140,8 +181,10 @@ class TestSwarmBenchmark(unittest.TestCase):
                            "credits": 1, "source": "authoritative receipt"}
         sb.validate_trial(trial, self.case)
         report = sb.compare_trials(self.case, [self.serial, trial])
-        self.assertEqual(report["observed_peak_coverage"]["known"], 1)
-        self.assertFalse(report["usage_complete"])
+        self.assertEqual(
+            report["observed_peak_coverage"]["declared_known"], 1)
+        self.assertEqual(report["usage_coverage"]["input_tokens_declared"], 1)
+        self.assertEqual(report["usage_coverage"]["credits_declared"], 1)
 
     def test_cli_validation_plan_compare_and_hostile_input(self):
         run = lambda *args: subprocess.run(
@@ -162,7 +205,7 @@ class TestSwarmBenchmark(unittest.TestCase):
         report = run("compare", case_path, serial_path, swarm_path,
                      "--format", "markdown")
         self.assertEqual(report.returncode, 0, report.stderr)
-        self.assertIn("Swarm benchmark report", report.stdout)
+        self.assertIn("not benchmark evidence", report.stdout)
         with tempfile.TemporaryDirectory(prefix="benchmark-hostile-") as tmp:
             duplicate = Path(tmp, "duplicate.json")
             duplicate.write_text('{"case_id":"x","case_id":"y"}',

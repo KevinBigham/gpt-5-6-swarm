@@ -68,7 +68,12 @@
       "additionalProperties": false,
       "required": ["serial", "swarm"],
       "properties": {
-        "serial": {"$ref": "#/$defs/treatment"},
+        "serial": {
+          "allOf": [
+            {"$ref": "#/$defs/treatment"},
+            {"properties": {"requested_parallel": {"const": 1}}}
+          ]
+        },
         "swarm": {"$ref": "#/$defs/treatment"}
       }
     },
@@ -84,6 +89,20 @@
       }
     }
   },
+  "allOf": [
+    {
+      "if": {"properties": {"track": {"const": "fixed_graph_scheduling"}}},
+      "then": {
+        "properties": {
+          "treatments": {
+            "properties": {
+              "swarm": {"properties": {"requested_parallel": {"minimum": 2}}}
+            }
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "treatment": {

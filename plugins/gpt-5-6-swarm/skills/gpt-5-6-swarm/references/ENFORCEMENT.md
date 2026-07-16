@@ -45,10 +45,12 @@ Enforced deterministically (the tool fails closed):
 - optional bounded hashing detects ignored-file content drift; `doctor`
   reports a recorded-consistency badge, artifacts, ambiguity, and resume token
 - optional frozen contracts reject node-field, dependency, route, base, and
-  ownership drift before `create-node`; the verified contract digest is bound
-  into the existing task fingerprint
+  ownership drift before `create-node`; one immutable sidecar and its journal
+  record bind the whole run before its first node, while the digest also enters
+  each node's existing task fingerprint
 - `render-status` escapes all ledger text into a dependency-free static HTML
-  operator view; it adds visibility, not live-host observation
+  operator view and exposes unsafe journal state; it adds visibility, not
+  live-host observation
 
 Still protocol guidance (judgment the coordinator owns): route selection,
 model/effort choice within the whitelist, semantic (paraphrase-level)
@@ -288,8 +290,9 @@ stamp travels in every normative skill document:
   the untrusted-artifact boundary. `1.3.0` adds task-bound one-shot authority,
   verified local artifact bytes, WAL recovery, ignored-file drift evidence,
   path-rebinding defense, and `doctor`. `1.4.0` adds optional frozen-contract
-  binding, escaped operator status, paired benchmark evidence guidance, and
-  marketplace packaging without weakening existing concurrency ceilings.
+  run-wide frozen-contract binding, escaped operator/journal status,
+  declared-record benchmark guidance, and marketplace packaging without
+  weakening existing concurrency ceilings.
   Tool `0.4.x` accepts protocol `1.4.x` and
   refuses other major/minor series. `verify-reference-set` and `init` require
   an exact stamp in every packaged normative document.

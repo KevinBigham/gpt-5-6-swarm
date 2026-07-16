@@ -25,11 +25,16 @@ codex plugin add gpt-5-6-swarm@gpt-5-6-swarm
 Start a new Codex task after installation or reinstallation so the skill is
 loaded from the new package.
 
+Finish or explicitly reconcile an active older-protocol run with the tool that
+created it before upgrading. Tool 0.4 intentionally refuses protocol 1.3
+ledgers instead of silently migrating in-flight execution state.
+
 ## What the plugin installs
 
 The plugin installs `$gpt-5-6-swarm`, including its reference set, ledger,
 frozen-contract tool, and benchmark evidence tool. It declares no hooks, MCP
-servers, apps, remote services, or authentication requirements.
+servers, apps, remote services, or authentication requirements. The benchmark
+tool is a declared-record diagnostic, not a source-evidence authenticator.
 
 The eight files under `.codex/agents/` are **project-scoped contributor
 profiles**, not plugin components. The current documented plugin manifest has
@@ -45,18 +50,18 @@ may write, and only inside the exact root-assigned isolated worktree and scope.
 ## Validate before release
 
 ```sh
-PYTHONPATH=/tmp/gpt-swarm-skill-validator \
-  python3 /Users/kevin/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py \
+python3 -m pip install -r requirements-dev.txt
+CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
+python3 "$CODEX_HOME/skills/.system/plugin-creator/scripts/validate_plugin.py" \
   plugins/gpt-5-6-swarm
-
-PYTHONPATH=/tmp/gpt-swarm-skill-validator \
-  python3 /Users/kevin/.codex/skills/.system/skill-creator/scripts/quick_validate.py \
+python3 "$CODEX_HOME/skills/.system/skill-creator/scripts/quick_validate.py" \
   plugins/gpt-5-6-swarm/skills/gpt-5-6-swarm
 ```
 
-Those absolute paths are local maintainer examples, not runtime dependencies.
-Repository CI independently checks the marketplace/manifest tree, skill
-metadata, profile fields, version agreement, licenses, notices, and links.
+The validator paths resolve through the maintainer's configured Codex home and
+are not runtime dependencies. Repository CI independently checks the
+marketplace/manifest tree, skill metadata, profile fields, version agreement,
+licenses, notices, links, schemas, and examples.
 
 ## Credit
 
