@@ -14,7 +14,7 @@ This is an independent community derivative of [Forward Future's GPT-5.6 Relay](
 
 | Layer | What Swarm provides | Boundary |
 | --- | --- | --- |
-| Enforced in code | Legal recorded transitions, task/nonce deduplication, one recorded dispatch, one owner per node, declared path-scope conflicts, receipt shape/identity, generation compare-and-set, atomic local persistence, mixed-reference refusal, and fail-closed `UNKNOWN` | Consistency of recorded claims; not proof of real host, process, file, database, or service behavior |
+| Enforced in code | Legal recorded transitions, task/nonce deduplication, task-bound one-shot authority records, one owner per node, declared/re-resolved path scopes, local artifact-byte verification, generation compare-and-set, WAL recovery, optional ignored-file drift evidence, mixed-reference refusal, and fail-closed `UNKNOWN` | Recorded consistency plus named local bytes at verification time; not proof of host behavior, commands, undeclared writes, operator identity, or external effects |
 | Instructed by the skill | Graph design, semantic deduplication, resource classification, worktree isolation, artifact inspection, cancellation, integration, and reconciliation | Depends on coordinator/worker compliance and independent evidence |
 | Host-gated | Child creation/collection, pinned model and effort routing, nonce discovery, turn inspection, cancel/interrupt, and live-slot telemetry | Missing capabilities narrow the route and are reported in the kickoff |
 | Externally fenced | Shared Git state, databases, services, deployment targets, and one-shot effects | Requires real locks, transactions, generation tokens, fresh outputs, or target-side idempotency; Codex alone does not supply these |
@@ -86,7 +86,7 @@ Use $gpt-5-6-swarm in build mode with workers=6 and parallel=3: <task>
   actual pinned/host-selected status reported.
 - Parallel snapshot-pinned research, independent review lenses, and disjoint worktree implementation.
 - One ledger-exclusive integration owner; real exclusivity still requires an effective host/resource fence.
-- Launch nonces and explicit state transitions to prevent duplicate automatic recorded dispatch.
+- Launch/authorization nonces and explicit transitions to prevent duplicate automatic recorded dispatch and misbound one-shot authority.
 - Capability-based fallback to read-only fan-out or serialized work.
 - Fail-closed handling for unknown writers, stalled workers, cancellation, external effects, and one-shot science.
 - Evidence-bearing handoffs and actual—not planned—route receipts.
@@ -95,7 +95,7 @@ The normative protocol is in [SKILL.md](.agents/skills/gpt-5-6-swarm/SKILL.md). 
 
 ## Deterministic enforcement evidence
 
-The protocol's represented safety-critical control-plane invariants are enforced by a standard-library Python runtime tool, not just prose: a run-local ledger under `.swarm/runs/<run-id>/` (gitignored) with a legal-transition state machine, fingerprint deduplication, launch/arm nonce uniqueness, one-active-owner and declared resource-scope rules, receipt-gated known terminal outcomes, generation compare-and-set, secure atomic local persistence, protocol-reference compatibility, and fail-closed `UNKNOWN` handling.
+The protocol's represented safety-critical control-plane invariants are enforced by a standard-library Python runtime tool, not just prose: a run-local ledger under `.swarm/runs/<run-id>/` (gitignored) with a legal-transition state machine, fingerprint deduplication, launch/arm/authorization nonce uniqueness, one-active-owner and re-resolved resource-scope rules, receipt-gated outcomes, local artifact-byte recomputation, generation compare-and-set, write-ahead recovery, protocol-reference compatibility, and fail-closed `UNKNOWN` handling.
 
 ```sh
 python3 .agents/skills/gpt-5-6-swarm/scripts/swarm_ledger.py --help
@@ -103,7 +103,7 @@ python3 -m unittest discover -s tests   # offline, deterministic
 python3 .agents/skills/gpt-5-6-swarm/scripts/swarm_ledger.py verify-reference-set
 ```
 
-CI runs the offline suite across Python 3.9/3.11/3.13 on Ubuntu, Python 3.11 on Windows and macOS, plus a published 85% coverage gate for the ledger. See [the invariant-to-test map](docs/INVARIANTS.md), [operator runbook](docs/RUNBOOK.md), and [development roadmap](docs/ROADMAP.md).
+CI runs the offline suite across Python 3.9/3.11/3.13 on Ubuntu, Python 3.11 on Windows and macOS, plus a published branch-aware coverage gate for the ledger. See [the invariant-to-test map](docs/INVARIANTS.md), [operator runbook](docs/RUNBOOK.md), and [development roadmap](docs/ROADMAP.md).
 
 See [ENFORCEMENT.md](.agents/skills/gpt-5-6-swarm/references/ENFORCEMENT.md) for the lifecycle, scope boundary, exit codes, recovery, and versioning contract; [SCHEDULING.md](.agents/skills/gpt-5-6-swarm/references/SCHEDULING.md) for bounded concurrency; [HOSTS.md](.agents/skills/gpt-5-6-swarm/references/HOSTS.md) for verified host capabilities versus gated experiments. The prompt-only workflow remains available when command execution or permission for control-plane state writes is absent.
 
@@ -117,7 +117,7 @@ Shared checkout mutation, integration, mutable databases and daemons, deployment
 
 This project is an independent derivative of [Forward Future's GPT-5.6 Relay](https://github.com/Forward-Future/gpt-5-6-relay), originally committed by Matthew Berman and distributed under the MIT License.
 
-Swarm retains Relay's core ideas around visible model-specific Codex threads, host-gated model/effort routing, concrete handoffs, one writer per checkout, and serial deployment. It adds the parallel scheduler, concurrency controls, launch-state protocol, resource isolation, one-shot barrier, route library, and reconciliation rules.
+Swarm retains Relay's core ideas around visible model-specific Codex threads, host-gated model/effort routing, concrete handoffs, one writer per checkout, and serial deployment. It adds the parallel scheduler, concurrency controls, launch-state protocol, resource isolation, task-bound one-shot authority, local artifact-byte verification, write-ahead recovery, drift/rebinding defenses, route library, doctor report, and reconciliation rules.
 
 The upstream copyright and MIT permission notice are preserved in [LICENSE](LICENSE). A detailed provenance record appears in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 

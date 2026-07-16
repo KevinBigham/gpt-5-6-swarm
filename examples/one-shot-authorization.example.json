@@ -1,0 +1,10 @@
+{
+  "authorization_version": 1,
+  "operator_id": "example-operator",
+  "run_id": "example-run",
+  "node_id": "publish-once",
+  "task_fingerprint": "3d2d9a3ec5e6a80a301fe0132fa4ba0f31938495a9fca1c011389f5704ef4812",
+  "authorization_nonce": "authority-publish-0001",
+  "issued_at": "2026-07-16T17:30:00+00:00",
+  "expires_at": "2026-07-16T17:40:00+00:00"
+}

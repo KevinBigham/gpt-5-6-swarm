@@ -8,4 +8,4 @@ If that channel is unexpectedly unavailable, do not post sensitive details publi
 
 Ordinary documentation errors and non-sensitive improvements may be reported through public issues.
 
-The ledger enforces consistency of recorded control-plane claims. It does not authenticate workers, sandbox artifact content, lock uncooperative external writers, or guarantee exactly-once external effects. Security reports should distinguish an executable invariant bypass from prompt/host/target limitations already documented by the project.
+The ledger enforces consistency of recorded control-plane claims and recomputes named local path-scoped artifact bytes before success. The one-shot authorization record is bounded and task-bound but is not cryptographically signed and does not authenticate a human. The tool does not authenticate workers, prove commands ran, detect every undeclared/out-of-tree change, sandbox artifact content, lock uncooperative external writers, or guarantee exactly-once external effects. Security reports should distinguish an executable invariant bypass from documented prompt/host/target limitations.

@@ -15,14 +15,32 @@ This roadmap converts the 2026-07 independent adversarial audit into testable re
 
 Release gate: all platform jobs and coverage pass; skill validation passes; public release tag and evidence links exist.
 
-## v0.3.0 - host adapter and artifact binding
+## v0.3.0 - Gen-2 evidence binding
 
-- Bind receipts to coordinator-recomputed artifact hashes under an explicit artifact root.
-- Add a host adapter/probe interface for spawn, turn-read, nonce discovery, cancellation, and lifecycle hooks.
-- Add mocked-host end-to-end tests for lost create responses, orphan adoption, cancellation failure, and lost arm acknowledgment.
-- Add property-based scope tests without making property-test tooling a runtime dependency.
+- Bind local path-scoped receipts to coordinator-recomputed artifact hashes.
+- Require fresh, task-bound, single-use operator records before one-shot creation.
+- Add intent/commit WAL recovery, ignored-file drift hashing, path rebinding
+  defense, case-normalized resources, and a safety-focused `doctor` command.
+- Add a compact coordinator kernel and progressive reference routing.
+- Expand adversarial branch-aware coverage around authorization, artifacts,
+  drift, symlink swaps, and both crash windows.
 
-Release gate: every host claim is emitted by a tested adapter; receipt acceptance can verify real bytes for local artifacts.
+Release gate: path-scoped success verifies real bytes; WAL crash cases recover
+without manual re-anchoring; every new invariant has accepting/rejecting tests.
+
+## v0.4.0 - trustworthy host adapter
+
+- Bind spawn, turn-read, nonce discovery, cancellation, and lifecycle evidence
+  through a tested host adapter once the host exposes a trustworthy
+  coordinator nonce/prompt at child start and a way to refuse mismatches.
+- Add mocked-host end-to-end tests for lost create responses, orphan adoption,
+  cancellation failure, and lost arm acknowledgment.
+- Add property-based scope tests without making property-test tooling a
+  runtime dependency.
+
+Release gate: every host claim is emitted by a tested adapter. Current
+`SubagentStart` metadata is insufficient because it does not expose the launch
+prompt/nonce and cannot veto a start; v0.3 therefore makes no such claim.
 
 ## v1.0 - validated public beta exit
 

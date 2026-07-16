@@ -125,6 +125,8 @@ class TestRepoHygiene(unittest.TestCase):
                                     "ledger.schema.json").read_text("utf-8"))
         receipt_schema = json.loads((REPO_ROOT / "schema" /
                                      "receipt.schema.json").read_text("utf-8"))
+        authorization_schema = json.loads((REPO_ROOT / "schema" /
+            "one-shot-authorization.schema.json").read_text("utf-8"))
         example = json.loads((REPO_ROOT / "examples" /
                               "ledger.example.json").read_text("utf-8"))
         node = next(iter(example["nodes"].values()))
@@ -142,6 +144,12 @@ class TestRepoHygiene(unittest.TestCase):
                          set(sl.REQUIRED_RECEIPT_KEYS))
         self.assertEqual(set(receipt_schema["properties"]["status"]["enum"]),
                          {"SUCCEEDED", "FAILED", "ABORTED", "CANCELED"})
+        authorization = json.loads((REPO_ROOT / "examples" /
+            "one-shot-authorization.example.json").read_text("utf-8"))
+        self.assertEqual(set(authorization_schema["required"]),
+                         set(sl.REQUIRED_AUTHORIZATION_KEYS))
+        self.assertEqual(set(authorization),
+                         set(sl.REQUIRED_AUTHORIZATION_KEYS))
 
     def test_release_contract_consistency(self):
         import importlib.util

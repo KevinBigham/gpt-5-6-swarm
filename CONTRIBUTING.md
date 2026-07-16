@@ -11,7 +11,7 @@ Contributions are welcome when they make the orchestration protocol safer, clear
 - Update the relevant route, concurrency, and reporting references together when changing a cross-cutting invariant.
 - Keep every normative skill document on the exact protocol reference-set stamp; `verify-reference-set` and `init` fail closed on partial upgrades.
 - Changes to `scripts/swarm_ledger.py` or any enforced invariant must ship with accompanying scenario tests (both an accepting and a rejecting case where applicable); run `python -m unittest discover -s tests` locally - the suite is offline and standard-library only.
-- Keep ledger statement coverage at or above 85% with `python -m coverage run -m unittest discover -s tests`, `python -m coverage combine`, and `python -m coverage report` after installing `requirements-dev.txt`.
+- Keep combined statement/branch coverage at or above 85% with `python -m coverage run -m unittest discover -s tests`, `python -m coverage combine`, and `python -m coverage report` after installing `requirements-dev.txt`. Do not exclude hard paths merely to raise the number.
 
 By contributing, you agree that your contribution is licensed under this repository's MIT License.
 

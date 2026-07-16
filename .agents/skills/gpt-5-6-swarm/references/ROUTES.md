@@ -1,8 +1,8 @@
 # Routes and worker budgets
 
-Protocol reference set: `1.2.0`.
+Protocol reference set: `1.3.0`.
 
-Read this reference completely during preflight. The templates are starting points, not quotas.
+Use this reference when preflight needs a route, budget, or graph template. The templates are starting points, not quotas.
 
 `workers` means the total worker-node child-thread ceiling. `parallel` means the peak simultaneous worker-node ceiling. Both exclude an optional proxy coordinator child, which consumes one host slot and is reported separately. Reserve coordinator/recovery capacity and use:
 

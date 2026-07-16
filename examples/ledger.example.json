@@ -15,6 +15,15 @@
         "spent": false
       },
       "artifact_disposition": "CURRENT",
+      "artifact_verification": {
+        "artifact_hashes": {
+          "src/api/handlers.py": "sha256:4ea77e5a4ea77e5a4ea77e5a4ea77e5a4ea77e5a4ea77e5a4ea77e5a4ea77e5a"
+        },
+        "receipt_sha256": "a2193f574c32f0f1648a1d91f77ddf4ab5f5807ecc93006097c466a1bcc2c7d8",
+        "status": "verified",
+        "verified_at": "2026-07-16T02:28:15.832920+00:00",
+        "worktree": "/example/isolated-worktree"
+      },
       "attempt": 1,
       "class": "ISOLATED",
       "created_at": "2026-07-16T02:28:15.168072+00:00",
@@ -79,6 +88,7 @@
       "model": "gpt-5.6-terra",
       "node_id": "impl",
       "one_shot": false,
+      "one_shot_authorization": null,
       "receipt": {
         "artifact": "worktree wt-impl, branch swarm/impl, commit 4b1c2d3",
         "artifact_hashes": {
@@ -142,6 +152,7 @@
         "spent": false
       },
       "artifact_disposition": "CURRENT",
+      "artifact_verification": null,
       "attempt": 1,
       "class": "PURE",
       "created_at": "2026-07-16T02:28:15.111910+00:00",
@@ -202,11 +213,10 @@
       "model": "gpt-5.6-luna",
       "node_id": "recon",
       "one_shot": false,
+      "one_shot_authorization": null,
       "receipt": {
         "artifact": "reports/recon-findings.md",
-        "artifact_hashes": {
-          "reports/recon-findings.md": "sha256:1c0ffee01c0ffee01c0ffee01c0ffee01c0ffee01c0ffee01c0ffee01c0ffee0"
-        },
+        "artifact_hashes": {},
         "assumptions": [
           "repo state at rev-2af1e9c"
         ],
@@ -233,7 +243,7 @@
         "touched_paths": [],
         "unresolved_risks": []
       },
-      "receipt_sha256": "2e1b304ed2c4408cc6810d06ad8079c15cb9f548ec5da8e7a3d6f2d84d6c2651",
+      "receipt_sha256": "4e1a7ba7219fad48a7e736772597206e240d7ea25db5b7173cb9a3d7cfb8fe13",
       "reconciliation": null,
       "resources": [],
       "retry_authorization": null,
@@ -244,18 +254,19 @@
   },
   "nonces": {
     "arm": {},
+    "authorization": {},
     "launch": {
       "nonce-impl-0001": "impl#1",
       "nonce-recon-0001": "recon#1"
     }
   },
-  "protocol_version": "1.2.0",
+  "protocol_version": "1.3.0",
   "run_id": "example-run",
-  "schema_version": 1,
+  "schema_version": 2,
   "task": {
     "description_digest": "sha256:demo-task-reference",
     "type": "build"
   },
-  "tool_version": "0.2.0",
+  "tool_version": "0.3.0",
   "updated_at": "2026-07-16T02:28:15.833014+00:00"
 }

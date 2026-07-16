@@ -28,7 +28,7 @@ Design principles:
   * Ambiguity is preserved, not resolved: UNKNOWN stays UNKNOWN until a
     human/coordinator records reconciliation evidence.
 
-Protocol version: 1.2.0   Schema version: 1   (see references/ENFORCEMENT.md)
+Protocol version: 1.3.0   Schema version: 2   (see references/ENFORCEMENT.md)
 """
 
 from __future__ import annotations
@@ -44,13 +44,13 @@ import subprocess
 import sys
 import tempfile
 import unicodedata
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-TOOL_VERSION = "0.2.0"
-PROTOCOL_VERSION = "1.2.0"
-SCHEMA_VERSION = 1
-SUPPORTED_SCHEMA_VERSIONS = {1}
-SUPPORTED_PROTOCOL_SERIES = {(1, 2)}
+TOOL_VERSION = "0.3.0"
+PROTOCOL_VERSION = "1.3.0"
+SCHEMA_VERSION = 2
+SUPPORTED_SCHEMA_VERSIONS = {2}
+SUPPORTED_PROTOCOL_SERIES = {(1, 3)}
 
 REFERENCE_SET_STAMP = f"Protocol reference set: `{PROTOCOL_VERSION}`."
 REFERENCE_SET_FILES = (
@@ -135,8 +135,11 @@ LEGAL_TRANSITIONS = {
 # ---------------------------------------------------------------------------
 LEDGER_MAX_BYTES = 5_000_000
 RECEIPT_MAX_BYTES = 512_000
+AUTHORIZATION_MAX_BYTES = 32_000
 MAX_JSON_DEPTH = 64
 MAX_TEXT_FIELD = 4_000
+IGNORED_BASELINE_MAX_FILE_BYTES = 50_000_000
+IGNORED_BASELINE_MAX_TOTAL_BYTES = 250_000_000
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 NONCE_RE = re.compile(r"^[A-Za-z0-9._-]{8,128}$")
 NODE_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}#[1-9][0-9]*$")
@@ -148,6 +151,11 @@ REQUIRED_RECEIPT_KEYS = (
     "resources_released", "artifact_hashes", "descendant_thread_ids",
     "assumptions", "unresolved_risks", "cleanup_items",
 )
+
+REQUIRED_AUTHORIZATION_KEYS = {
+    "authorization_version", "operator_id", "run_id", "node_id",
+    "task_fingerprint", "authorization_nonce", "issued_at", "expires_at",
+}
 
 
 class LedgerError(Exception):
@@ -179,6 +187,19 @@ class Finding:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _parse_utc_timestamp(value, label):
+    if not isinstance(value, str):
+        raise LedgerError(EXIT_SHAPE, f"{label} must be an ISO-8601 string")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise LedgerError(EXIT_SEMANTIC,
+                          f"{label} is not valid ISO-8601: {exc}")
+    if parsed.tzinfo is None:
+        raise LedgerError(EXIT_SEMANTIC, f"{label} must include a timezone")
+    return parsed.astimezone(timezone.utc)
 
 
 # ---------------------------------------------------------------------------
@@ -221,6 +242,11 @@ def canon_scope_entry(entry: str) -> str:
         if not parts:
             raise LedgerError(EXIT_USAGE, f"path resource '{rid}' is empty")
         rid = "/".join(parts)
+    else:
+        # Non-path resource names are logical identifiers, not
+        # case-sensitive filesystem paths. Conservative casefolding prevents
+        # aliases such as service:Payments and service:payments.
+        rid = rid.casefold()
     return f"{rtype}:{rid}"
 
 
@@ -230,12 +256,20 @@ def compute_fingerprint(outcome: str, base_revision: str, inputs_digest: str,
     if digest != "none" and not HEX64_RE.match(digest):
         raise LedgerError(EXIT_USAGE,
                           "inputs digest must be 64 lowercase hex chars or 'none'")
+    scopes = []
+    for raw in write_scope:
+        scope = canon_scope_entry(raw)
+        rtype, rid = scope.split(":", 1)
+        scopes.append(f"{rtype}:{rid.casefold()}" if rtype == "path" else scope)
     doc = {
         "v": 1,
         "outcome": canon_text(outcome),
         "base": base_revision.strip(),
         "inputs": digest,
-        "scope": sorted(set(canon_scope_entry(e) for e in write_scope)),
+        # Conflict checks casefold paths across filesystems, so task identity
+        # does the same. This may deduplicate two case-distinct POSIX paths,
+        # which is the conservative cross-platform behavior.
+        "scope": sorted(set(scopes)),
         "gate": canon_text(gate),
     }
     payload = json.dumps(doc, sort_keys=True, separators=(",", ":"))
@@ -358,8 +392,78 @@ def _git(worktree, *args):
     return result.stdout
 
 
-def capture_git_baseline(worktree: str):
-    """Return stable HEAD and dirty-state evidence without mutating Git."""
+def _ignored_content_digest(root: str):
+    """Hash ignored file identities and bytes with explicit cost bounds."""
+    raw = _git(root, "-c", "core.quotepath=false", "ls-files", "--others",
+               "--ignored", "--exclude-standard", "-z", "--", ".",
+               ":(exclude).swarm/runs/**")
+    paths = sorted(path for path in raw.split(b"\0") if path)
+    digest = hashlib.sha256()
+    total = 0
+    for relative in paths:
+        candidate = os.path.join(root, os.fsdecode(relative))
+        try:
+            info = os.lstat(candidate)
+        except OSError as exc:
+            raise LedgerError(
+                EXIT_AMBIGUOUS,
+                f"ignored baseline changed during capture: {exc}")
+        digest.update(len(relative).to_bytes(8, "big"))
+        digest.update(relative)
+        if stat.S_ISREG(info.st_mode):
+            digest.update(b"file\0")
+            digest.update(info.st_size.to_bytes(8, "big"))
+            if info.st_size > IGNORED_BASELINE_MAX_FILE_BYTES:
+                raise LedgerError(
+                    EXIT_USAGE,
+                    "ignored baseline includes a file larger than "
+                    f"{IGNORED_BASELINE_MAX_FILE_BYTES} bytes; narrow the "
+                    "worktree or use an external resource fence")
+            total += info.st_size
+            if total > IGNORED_BASELINE_MAX_TOTAL_BYTES:
+                raise LedgerError(
+                    EXIT_USAGE,
+                    "ignored baseline exceeds the bounded total of "
+                    f"{IGNORED_BASELINE_MAX_TOTAL_BYTES} bytes; use an "
+                    "external manifest/fence for this worktree")
+            flags = os.O_RDONLY
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            try:
+                fd = os.open(candidate, flags)
+            except OSError as exc:
+                raise LedgerError(
+                    EXIT_AMBIGUOUS,
+                    f"cannot read ignored baseline file safely: {exc}")
+            with os.fdopen(fd, "rb") as handle:
+                current = os.fstat(handle.fileno())
+                if not stat.S_ISREG(current.st_mode) or \
+                        (current.st_dev, current.st_ino, current.st_size) != \
+                        (info.st_dev, info.st_ino, info.st_size):
+                    raise LedgerError(
+                        EXIT_AMBIGUOUS,
+                        "ignored baseline file changed during capture")
+                for chunk in iter(lambda: handle.read(65536), b""):
+                    digest.update(chunk)
+                after = os.fstat(handle.fileno())
+                if (after.st_dev, after.st_ino, after.st_size,
+                        after.st_mtime_ns) != (
+                        current.st_dev, current.st_ino, current.st_size,
+                        current.st_mtime_ns):
+                    raise LedgerError(
+                        EXIT_AMBIGUOUS,
+                        "ignored baseline file changed while being hashed")
+        elif stat.S_ISLNK(info.st_mode):
+            digest.update(b"symlink\0" + os.fsencode(os.readlink(candidate)))
+        else:
+            raise LedgerError(
+                EXIT_AMBIGUOUS,
+                "ignored baseline contains a non-regular, non-symlink entry")
+    return "sha256:" + digest.hexdigest(), len(paths), total
+
+
+def capture_git_baseline(worktree: str, include_ignored: bool = False):
+    """Return stable HEAD and Git-visible drift evidence without mutation."""
     root = os.path.abspath(worktree)
     revision = _git(root, "rev-parse", "--verify", "HEAD").decode(
         "ascii", "strict").strip()
@@ -367,17 +471,27 @@ def capture_git_baseline(worktree: str):
                   "--porcelain=v1", "-z", "--untracked-files=all",
                   "--ignore-submodules=none", "--", ".",
                   ":(exclude).swarm/runs/**")
-    return {
+    report = {
         "worktree": root,
         "revision": revision,
         "dirty": bool(status),
         "dirty_digest": "sha256:" + hashlib.sha256(status).hexdigest(),
     }
+    if include_ignored:
+        ignored, count, total = _ignored_content_digest(root)
+        report.update({
+            "ignored_digest": ignored,
+            "ignored_file_count": count,
+            "ignored_total_bytes": total,
+        })
+    return report
 
 
 def verify_git_baseline(worktree: str, expected_revision: str,
-                        expected_dirty_digest: str):
-    actual = capture_git_baseline(worktree)
+                        expected_dirty_digest: str,
+                        expected_ignored_digest: str = None):
+    actual = capture_git_baseline(
+        worktree, include_ignored=expected_ignored_digest is not None)
     mismatches = []
     if actual["revision"] != expected_revision:
         mismatches.append(
@@ -385,6 +499,10 @@ def verify_git_baseline(worktree: str, expected_revision: str,
     if actual["dirty_digest"] != expected_dirty_digest:
         mismatches.append(
             "dirty-state digest changed (unaccounted worktree drift)")
+    if expected_ignored_digest is not None and \
+            actual.get("ignored_digest") != expected_ignored_digest:
+        mismatches.append(
+            "ignored-content digest changed (unaccounted ignored-file drift)")
     if mismatches:
         raise LedgerError(EXIT_AMBIGUOUS, "; ".join(mismatches))
     return actual
@@ -549,7 +667,12 @@ def acquire_lock(root: str, run_id: str, writer: str) -> str:
     try:
         os.mkdir(path)
     except FileExistsError:
-        info = os.lstat(path)
+        try:
+            info = os.lstat(path)
+        except FileNotFoundError:
+            raise LedgerError(
+                EXIT_STALE,
+                "ledger lock changed while being inspected; re-read and retry")
         if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
             raise LedgerError(EXIT_CORRUPT,
                               "ledger lock path must be a real directory")
@@ -630,13 +753,22 @@ def _file_sha256(path: str) -> str:
     return digest.hexdigest()
 
 
-def atomic_write_ledger(root: str, run_id: str, ledger: dict) -> str:
-    """Serialize + atomically replace ledger.json; return its sha256."""
-    target = ledger_path(root, run_id)
+def _ledger_payload(ledger: dict) -> bytes:
     payload = json.dumps(ledger, sort_keys=True, indent=2).encode("utf-8")
     if len(payload) > LEDGER_MAX_BYTES:
         raise LedgerError(EXIT_SEMANTIC,
                           "ledger would exceed size cap; condense evidence fields")
+    return payload
+
+
+def _ledger_digest(ledger: dict) -> str:
+    return hashlib.sha256(_ledger_payload(ledger)).hexdigest()
+
+
+def atomic_write_ledger(root: str, run_id: str, ledger: dict) -> str:
+    """Serialize + atomically replace ledger.json; return its sha256."""
+    target = ledger_path(root, run_id)
+    payload = _ledger_payload(ledger)
     parent = os.path.dirname(target)
     if os.path.lexists(target):
         info = os.lstat(target)
@@ -751,6 +883,79 @@ def journal_last_anchor(root: str, run_id: str):
     return last
 
 
+def classify_journal(root: str, run_id: str, ledger: dict):
+    """Classify journal/ledger agreement, including safe WAL repair cases."""
+    anchor, issue, last_good = scan_journal(root, run_id)
+    current = _file_sha256(ledger_path(root, run_id))
+    report = {"status": "mismatch", "reason": None, "entry": anchor,
+              "issue": issue, "last_good": last_good, "current": current}
+    if anchor is None:
+        report["status"] = "absent"
+        report["reason"] = ("journal absent" if ledger["generation"] == 1 else
+                            "journal deleted after mutations")
+        return report
+
+    phase = anchor.get("phase", "commit")
+    if phase == "intent":
+        base = anchor.get("base_generation")
+        intended = anchor.get("intended_snapshot_sha256")
+        valid_intent = (
+            isinstance(base, int) and not isinstance(base, bool) and
+            base >= 1 and anchor["generation"] == base + 1 and
+            isinstance(intended, str) and HEX64_RE.match(intended))
+        if not valid_intent:
+            report["reason"] = "malformed write-ahead intent"
+            return report
+        if current == anchor["snapshot_sha256"] and \
+                ledger["generation"] == base:
+            report["status"] = "recoverable-abort"
+            report["reason"] = "intent persisted but ledger replacement did not"
+            return report
+        if current == intended and ledger["generation"] == anchor["generation"]:
+            report["status"] = "recoverable-commit"
+            report["reason"] = "ledger replaced but commit record was interrupted"
+            return report
+        report["reason"] = "ledger matches neither side of the pending intent"
+        return report
+
+    if phase not in {"commit", "abort"}:
+        report["reason"] = f"unsupported journal phase {phase!r}"
+        return report
+    if current != anchor["snapshot_sha256"] or \
+            ledger["generation"] != anchor["generation"]:
+        report["reason"] = "ledger hash/generation differs from journal anchor"
+        return report
+    if issue:
+        report["status"] = "recoverable-tail"
+        report["reason"] = issue
+    else:
+        report["status"] = "anchored"
+        report["reason"] = "ledger matches committed journal anchor"
+    return report
+
+
+def repair_recoverable_journal(root: str, run_id: str, ledger: dict,
+                               classification: dict, writer: str) -> None:
+    """Finish or abandon an interrupted WAL record without changing ledger."""
+    status = classification["status"]
+    if status not in {"recoverable-abort", "recoverable-commit",
+                      "recoverable-tail"}:
+        return
+    if classification["issue"]:
+        truncate_journal(root, run_id, classification["last_good"])
+    if status == "recoverable-tail":
+        return
+    intent = classification["entry"]
+    journal_append(root, run_id, {
+        "phase": "abort" if status == "recoverable-abort" else "commit",
+        "at": _now(), "action": "wal-recovery", "writer": writer,
+        "generation": ledger["generation"],
+        "detail": {"recovered_intent_generation": intent["generation"],
+                   "outcome": status},
+        "snapshot_sha256": classification["current"],
+    })
+
+
 def truncate_journal(root: str, run_id: str, offset: int) -> None:
     path = journal_path(root, run_id)
     _lstat_regular(path, "audit journal")
@@ -804,22 +1009,23 @@ def load_ledger(root: str, run_id: str) -> dict:
 
 def check_external_writer(root: str, run_id: str, generation: int) -> None:
     """Compare current file hash to the last journal anchor (drift tripwire)."""
-    anchor = journal_last_anchor(root, run_id)
-    if anchor is None:
-        if generation > 1:
-            raise LedgerError(
-                EXIT_AMBIGUOUS,
-                "the audit journal is missing but the ledger is past "
-                "generation 1: the trail was deleted or never survived. "
-                "Investigate read-only, then 'recover --accept-current "
-                "--evidence ...' to start a new anchor once accounted for.")
-        return
-    current = _file_sha256(ledger_path(root, run_id))
-    if anchor.get("snapshot_sha256") != current:
+    ledger = load_ledger(root, run_id)
+    if ledger["generation"] != generation:
+        raise LedgerError(EXIT_STALE,
+                          "ledger generation changed during drift inspection")
+    status = classify_journal(root, run_id, ledger)
+    if status["status"] == "absent":
         raise LedgerError(
             EXIT_AMBIGUOUS,
-            "ledger content does not match the last journal anchor: an "
-            "unaccounted writer (or an interrupted append) touched it. "
+            "the audit journal is missing: initialization may have been "
+            "interrupted or the trail was deleted. Investigate read-only, "
+            "then 'recover --accept-current --evidence ...' to start a new "
+            "anchor once accounted for.")
+    if status["status"] != "anchored":
+        raise LedgerError(
+            EXIT_AMBIGUOUS,
+            "ledger content does not match a committed journal anchor: "
+            f"{status['reason']}. "
             "Investigate read-only, then 'recover --accept-current "
             "--evidence ...' to re-anchor once accounted for.")
 
@@ -922,6 +1128,27 @@ def parse_resources(entries, root=None):
     return resources
 
 
+def verify_resource_bindings(root: str, resources) -> None:
+    """Re-resolve path scopes immediately before claim/launch."""
+    root_real = os.path.realpath(root)
+    for resource in resources:
+        if resource["type"] != "path":
+            continue
+        resolved = os.path.realpath(os.path.join(root_real, resource["id"]))
+        try:
+            inside = os.path.commonpath([root_real, resolved]) == root_real
+        except ValueError:
+            inside = False
+        rebound = (os.path.relpath(resolved, root_real).replace("\\", "/")
+                   if inside else None)
+        if not inside or rebound != resource["id"]:
+            raise LedgerError(
+                EXIT_AMBIGUOUS,
+                f"resource path binding changed for {resource['id']!r}; "
+                "a symlink/rename race may alias another scope, so launch is "
+                "frozen until the declaration is rebuilt")
+
+
 def _check_text(value: str, label: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise LedgerError(EXIT_USAGE, f"{label} must be a non-empty string")
@@ -984,6 +1211,14 @@ def validate_receipt(node: dict, receipt: dict, run_id: str,
                 EXIT_SEMANTIC,
                 "artifact hashes must use sha256 followed by 64 lowercase "
                 "hex characters")
+        if os.path.isabs(artifact) or re.match(r"^[A-Za-z]:[/\\]", artifact):
+            raise LedgerError(EXIT_SEMANTIC,
+                              "artifact hash paths must be relative")
+        canonical_artifact = canon_scope_entry(
+            f"path:{artifact}").split(":", 1)[1]
+        if canonical_artifact != artifact.replace("\\", "/"):
+            raise LedgerError(EXIT_SEMANTIC,
+                              "artifact hash paths must be canonical")
     if receipt["run_id"] != run_id:
         raise LedgerError(EXIT_SEMANTIC, "receipt run_id does not match run")
     if receipt["node_id"] != node["node_id"] or \
@@ -1098,7 +1333,72 @@ def validate_receipt(node: dict, receipt: dict, run_id: str,
                 EXIT_SEMANTIC,
                 f"touched path {path!r} is outside the node's declared "
                 "path resource scopes")
+    if node["class"] == "PURE" and hashes:
+        raise LedgerError(EXIT_SEMANTIC,
+                          "PURE work may not claim local artifact hashes")
+    if expect_status == "SUCCEEDED" and path_scopes and not hashes:
+        raise LedgerError(
+            EXIT_SEMANTIC,
+            "SUCCEEDED work with local path scopes requires at least one "
+            "artifact hash")
+    for artifact in hashes:
+        if not any(_path_contains(scope, artifact) for scope in path_scopes):
+            raise LedgerError(
+                EXIT_SEMANTIC,
+                f"artifact hash path {artifact!r} is outside the node's "
+                "declared path resource scopes")
     return fully_released
+
+
+def verify_receipt_artifacts(node: dict, receipt: dict, worktree: str):
+    """Recompute declared artifact hashes from regular, in-scope files."""
+    hashes = receipt["artifact_hashes"]
+    if not hashes:
+        raise LedgerError(EXIT_SEMANTIC,
+                          "artifact verification requires non-empty hashes")
+    root_real = os.path.realpath(worktree)
+    verified = {}
+    for relative, expected in sorted(hashes.items()):
+        candidate = os.path.join(root_real, *relative.split("/"))
+        resolved = os.path.realpath(candidate)
+        try:
+            inside = os.path.commonpath([root_real, resolved]) == root_real
+        except ValueError:
+            inside = False
+        rebound = (os.path.relpath(resolved, root_real).replace("\\", "/")
+                   if inside else None)
+        if not inside or rebound != relative:
+            raise LedgerError(
+                EXIT_AMBIGUOUS,
+                f"artifact path binding changed for {relative!r}; refusing "
+                "symlinked or out-of-tree evidence")
+        actual = "sha256:" + _file_sha256(resolved)
+        if actual != expected:
+            raise LedgerError(
+                EXIT_AMBIGUOUS,
+                f"artifact hash mismatch for {relative!r}: receipt says "
+                f"{expected}, current bytes are {actual}")
+        verified[relative] = actual
+    return {
+        "status": "verified", "verified_at": _now(),
+        "worktree": root_real,
+        "receipt_sha256": hashlib.sha256(json.dumps(
+            receipt, sort_keys=True).encode()).hexdigest(),
+        "artifact_hashes": verified,
+    }
+
+
+def op_verify_artifacts(root, run_id, ref, receipt_file, worktree,
+                        expect_status="SUCCEEDED"):
+    ledger = load_ledger(root, run_id)
+    findings = _blocking_semantic_findings(validate_ledger(ledger))
+    if findings:
+        raise LedgerError(EXIT_SEMANTIC,
+                          "refusing verification against an invalid ledger")
+    node = get_node(ledger, ref)
+    receipt = safe_load_json(receipt_file, RECEIPT_MAX_BYTES)
+    validate_receipt(node, receipt, run_id, expect_status)
+    return verify_receipt_artifacts(node, receipt, worktree)
 
 
 # ---------------------------------------------------------------------------
@@ -1108,12 +1408,73 @@ def _blocking_semantic_findings(findings):
     return [f for f in findings if f.severity == "VIOLATION"]
 
 
+def validate_one_shot_authorization(authorization, *, run_id, node_id,
+                                    fingerprint, now=None):
+    """Validate a bounded, task-bound operator authorization record.
+
+    The record is deliberately not called a signature: it is structured
+    operator evidence supplied through a user-owned channel, not proof of
+    identity against a trusted key.
+    """
+    if not isinstance(authorization, dict):
+        raise LedgerError(EXIT_SHAPE,
+                          "one-shot authorization must be a JSON object")
+    if set(authorization) != REQUIRED_AUTHORIZATION_KEYS:
+        missing = sorted(REQUIRED_AUTHORIZATION_KEYS - set(authorization))
+        extra = sorted(set(authorization) - REQUIRED_AUTHORIZATION_KEYS)
+        raise LedgerError(
+            EXIT_SHAPE,
+            f"one-shot authorization keys mismatch; missing={missing}, "
+            f"unsupported={extra}")
+    if authorization["authorization_version"] != 1 or isinstance(
+            authorization["authorization_version"], bool):
+        raise LedgerError(EXIT_VERSION,
+                          "authorization_version must be integer 1")
+    if not isinstance(authorization["operator_id"], str) or not ID_RE.match(
+            authorization["operator_id"]):
+        raise LedgerError(EXIT_SHAPE, "operator_id fails identifier grammar")
+    if authorization["run_id"] != run_id or \
+            authorization["node_id"] != node_id:
+        raise LedgerError(EXIT_SEMANTIC,
+                          "one-shot authorization is bound to another run/node")
+    if authorization["task_fingerprint"] != fingerprint:
+        raise LedgerError(EXIT_SEMANTIC,
+                          "one-shot authorization task fingerprint mismatch")
+    nonce = authorization["authorization_nonce"]
+    if not isinstance(nonce, str) or not NONCE_RE.match(nonce):
+        raise LedgerError(EXIT_SHAPE,
+                          "authorization_nonce fails nonce grammar")
+    issued = _parse_utc_timestamp(authorization["issued_at"], "issued_at")
+    expires = _parse_utc_timestamp(authorization["expires_at"], "expires_at")
+    current = now or datetime.now(timezone.utc)
+    if expires <= issued or expires - issued > timedelta(minutes=15):
+        raise LedgerError(
+            EXIT_SEMANTIC,
+            "one-shot authorization lifetime must be positive and no more "
+            "than 15 minutes")
+    if issued > current + timedelta(minutes=5):
+        raise LedgerError(EXIT_SEMANTIC,
+                          "one-shot authorization issued_at is too far ahead")
+    if current >= expires:
+        raise LedgerError(EXIT_SEMANTIC,
+                          "one-shot authorization has expired")
+    return {
+        **authorization,
+        "source_sha256": hashlib.sha256(json.dumps(
+            authorization, sort_keys=True,
+            separators=(",", ":")).encode("utf-8")).hexdigest(),
+        "recorded_at": _now(),
+    }
+
+
 def mutate(root, run_id, writer, expect_generation, action, mutator):
     """Lock -> load -> drift check -> CAS -> pre-validate -> apply ->
     post-validate -> atomic persist -> journal -> unlock."""
     token = acquire_lock(root, run_id, writer)
     try:
         ledger = load_ledger(root, run_id)
+        journal_state = classify_journal(root, run_id, ledger)
+        repair_recoverable_journal(root, run_id, ledger, journal_state, writer)
         check_external_writer(root, run_id, ledger["generation"])
         if ledger["generation"] != expect_generation:
             raise LedgerError(
@@ -1136,9 +1497,23 @@ def mutate(root, run_id, writer, expect_generation, action, mutator):
         ledger["generation"] += 1
         ledger["tool_version"] = TOOL_VERSION
         ledger["updated_at"] = _now()
-        snapshot = atomic_write_ledger(root, run_id, ledger)
+        previous_snapshot = _file_sha256(ledger_path(root, run_id))
+        intended_snapshot = _ledger_digest(ledger)
         journal_append(root, run_id, {
-            "at": ledger["updated_at"], "action": action, "writer": writer,
+            "phase": "intent", "at": ledger["updated_at"],
+            "action": action, "writer": writer,
+            "base_generation": ledger["generation"] - 1,
+            "generation": ledger["generation"], "detail": detail,
+            "snapshot_sha256": previous_snapshot,
+            "intended_snapshot_sha256": intended_snapshot,
+        })
+        snapshot = atomic_write_ledger(root, run_id, ledger)
+        if snapshot != intended_snapshot:
+            raise LedgerError(EXIT_CORRUPT,
+                              "atomic ledger snapshot digest changed")
+        journal_append(root, run_id, {
+            "phase": "commit", "at": ledger["updated_at"],
+            "action": action, "writer": writer,
             "generation": ledger["generation"], "detail": detail,
             "snapshot_sha256": snapshot,
         })
@@ -1194,12 +1569,13 @@ def op_init(root, run_id, task_type, task_digest, capabilities, writer):
             "created_at": _now(),
             "updated_at": _now(),
             "generation": 1,
-            "nonces": {"launch": {}, "arm": {}},
+            "nonces": {"launch": {}, "arm": {}, "authorization": {}},
             "nodes": {},
         }
         snapshot = atomic_write_ledger(root, run_id, ledger)
         journal_append(root, run_id, {
-            "at": ledger["created_at"], "action": "init", "writer": writer,
+            "phase": "commit", "at": ledger["created_at"],
+            "action": "init", "writer": writer,
             "generation": 1, "detail": {"run_id": run_id},
             "snapshot_sha256": snapshot,
         })
@@ -1213,7 +1589,8 @@ def op_create_node(root, run_id, writer, expect_generation, *, node_id,
                    inputs_digest, gate, launch_nonce, resources,
                    dependencies, join, supersedes=None,
                    authorize_retry=None, dup_group=None,
-                   supplied_fingerprint=None):
+                   supplied_fingerprint=None,
+                   one_shot_authorization_file=None):
     if not ID_RE.match(node_id):
         raise LedgerError(EXIT_USAGE, f"node id {node_id!r} fails id grammar")
     if klass not in CLASSES:
@@ -1250,8 +1627,16 @@ def op_create_node(root, run_id, writer, expect_generation, *, node_id,
                           "from the declared inputs (possible tampering)")
     if join != "all" and join != "any" and not re.match(r"^quorum:[1-9]\d*$", join):
         raise LedgerError(EXIT_USAGE, "join must be all, any, or quorum:N")
+    if klass != "ONE_SHOT" and one_shot_authorization_file:
+        raise LedgerError(EXIT_USAGE,
+                          "--one-shot-authorization is valid only for ONE_SHOT")
+    authorization_source = None
+    if one_shot_authorization_file:
+        authorization_source = safe_load_json(
+            one_shot_authorization_file, AUTHORIZATION_MAX_BYTES)
 
     def mutator(ledger):
+        authorization = None
         caps = ledger.get("host_capabilities", {})
         if klass in GUARDED_RETRY_CLASSES and \
                 caps.get("unique_launch_discovery") is not True:
@@ -1266,6 +1651,25 @@ def op_create_node(root, run_id, writer, expect_generation, *, node_id,
                 "class ONE_SHOT requires one_shot_fence=true: declare it only "
                 "after verifying a fresh output target, target-side "
                 "idempotency key, transaction, or effective external fence")
+        if authorization_source is not None:
+            authorization = validate_one_shot_authorization(
+                authorization_source, run_id=run_id, node_id=node_id,
+                fingerprint=fingerprint)
+        if klass == "ONE_SHOT" and not authorization:
+            raise LedgerError(
+                EXIT_SEMANTIC,
+                "ONE_SHOT requires --one-shot-authorization supplied through "
+                "an operator-owned channel; an agent must never mint its own "
+                "authority")
+        if authorization:
+            authorization_nonce = authorization["authorization_nonce"]
+            if authorization_nonce in ledger["nonces"]["authorization"] or \
+                    authorization_nonce in ledger["nonces"]["launch"] or \
+                    authorization_nonce in ledger["nonces"]["arm"]:
+                raise LedgerError(
+                    EXIT_SEMANTIC,
+                    "authorization nonce was already issued; authority records "
+                    "are immutable and single-use")
         pending = unresolved_unknowns(ledger)
         if pending and klass != "PURE":
             raise LedgerError(
@@ -1274,7 +1678,8 @@ def op_create_node(root, run_id, writer, expect_generation, *, node_id,
                 "reconciliation capacity; only PURE nodes may be created "
                 "until they are reconciled (references/SCHEDULING.md)")
         if launch_nonce in ledger["nonces"]["launch"] or \
-                launch_nonce in ledger["nonces"]["arm"]:
+                launch_nonce in ledger["nonces"]["arm"] or \
+                launch_nonce in ledger["nonces"]["authorization"]:
             raise LedgerError(EXIT_SEMANTIC,
                               f"nonce {launch_nonce!r} was already issued; "
                               "nonces are immutable and single-use")
@@ -1381,10 +1786,12 @@ def op_create_node(root, run_id, writer, expect_generation, *, node_id,
             "resources": parsed_resources, "holds_resources": False,
             "dependencies": dependencies_unique, "join": join,
             "receipt": None, "receipt_sha256": None,
+            "artifact_verification": None,
             "artifact_disposition": None,
             "reconciliation": None, "supersedes": supersedes,
             "retry_authorization": authorize_retry,
             "dup_group": dup_group,
+            "one_shot_authorization": authorization,
             "created_at": _now(), "last_transition_at": _now(),
             "history": [{"from": None, "to": "PLANNED", "at": _now(),
                          "note": "created"}],
@@ -1393,6 +1800,9 @@ def op_create_node(root, run_id, writer, expect_generation, *, node_id,
             node["model_warning"] = "model outside the documented roster"
         ledger["nodes"][key] = node
         ledger["nonces"]["launch"][launch_nonce] = key
+        if authorization:
+            ledger["nonces"]["authorization"][
+                authorization["authorization_nonce"]] = key
         return {"node": key, "fingerprint": fingerprint}
 
     return mutate(root, run_id, writer, expect_generation, "create-node",
@@ -1455,7 +1865,8 @@ def op_record_arm_dispatch(root, run_id, writer, expect_generation, ref):
 def op_transition(root, run_id, writer, expect_generation, ref, target, *,
                   evidence=None, thread_id=None, receipt_file=None,
                   arm_nonce=None, readiness_evidence=None,
-                  arm_acknowledged=False, termination_evidence=None):
+                  arm_acknowledged=False, termination_evidence=None,
+                  verification_worktree=None):
     if target not in STATES:
         raise LedgerError(EXIT_USAGE, f"unknown state {target!r}")
 
@@ -1482,6 +1893,7 @@ def op_transition(root, run_id, writer, expect_generation, ref, target, *,
             if not ok:
                 raise LedgerError(EXIT_SEMANTIC,
                                   f"dependencies/join no longer satisfied: {why}")
+            verify_resource_bindings(root, node["resources"])
             conflicts = find_resource_conflicts(ledger, ref, node["resources"])
             if conflicts:
                 lines = [f"{k} holds {h} vs wanted {w}" for k, h, w in conflicts]
@@ -1495,6 +1907,7 @@ def op_transition(root, run_id, writer, expect_generation, ref, target, *,
             if not ok:
                 raise LedgerError(EXIT_SEMANTIC,
                                   f"dependencies/join no longer satisfied: {why}")
+            verify_resource_bindings(root, node["resources"])
             if node["class"] != "PURE" and not node["holds_resources"]:
                 raise LedgerError(EXIT_SEMANTIC,
                                   "non-PURE work may launch only while all "
@@ -1547,7 +1960,8 @@ def op_transition(root, run_id, writer, expect_generation, ref, target, *,
                 raise LedgerError(EXIT_SEMANTIC,
                                   "ARMED requires a valid --arm-nonce")
             if arm_nonce in ledger["nonces"]["arm"] or \
-                    arm_nonce in ledger["nonces"]["launch"]:
+                    arm_nonce in ledger["nonces"]["launch"] or \
+                    arm_nonce in ledger["nonces"]["authorization"]:
                 raise LedgerError(EXIT_SEMANTIC,
                                   "arm nonce already issued; arm nonces are "
                                   "single-use and unique")
@@ -1588,6 +2002,21 @@ def op_transition(root, run_id, writer, expect_generation, ref, target, *,
             node["receipt"] = receipt
             node["receipt_sha256"] = hashlib.sha256(
                 json.dumps(receipt, sort_keys=True).encode()).hexdigest()
+            if target == "SUCCEEDED" and receipt["artifact_hashes"]:
+                if not verification_worktree:
+                    raise LedgerError(
+                        EXIT_SEMANTIC,
+                        "artifact hashes require --verification-worktree so "
+                        "the coordinator can recompute the current bytes")
+                node["artifact_verification"] = verify_receipt_artifacts(
+                    node, receipt, verification_worktree)
+            elif target == "SUCCEEDED" and any(
+                    resource["type"] == "path"
+                    for resource in node["resources"]):
+                raise LedgerError(
+                    EXIT_SEMANTIC,
+                    "mutating success requires independently verified "
+                    "artifact hashes")
             if fully_released:
                 node["holds_resources"] = False
             if target == "SUCCEEDED":
@@ -1839,12 +2268,14 @@ def validate_ledger_shape(ledger):
         bad("E_SHAPE", None,
             "host_capabilities must map strings to booleans")
     nonces = ledger["nonces"]
-    if not isinstance(nonces, dict) or set(nonces) != {"launch", "arm"}:
+    if not isinstance(nonces, dict) or set(nonces) != {
+            "launch", "arm", "authorization"}:
         bad("E_SHAPE", None,
-            "nonces must contain exactly launch and arm objects")
+            "nonces must contain exactly launch, arm, and authorization objects")
         return findings
     launch = nonces["launch"]
     arm_registry = nonces["arm"]
+    authorization_registry = nonces["authorization"]
     if not isinstance(launch, dict) or not all(
             isinstance(key, str) and isinstance(value, str)
             for key, value in launch.items()):
@@ -1870,6 +2301,12 @@ def validate_ledger_shape(ledger):
                 bad("E_SHAPE", None,
                     f"arm nonce {nonce!r} needs a valid nonce, exact node/"
                     "spent keys, a node reference, and boolean spent")
+    if not isinstance(authorization_registry, dict) or not all(
+            isinstance(key, str) and NONCE_RE.match(key) and
+            isinstance(value, str) and NODE_REF_RE.match(value)
+            for key, value in authorization_registry.items()):
+        bad("E_SHAPE", None,
+            "nonces.authorization must map valid nonces to node references")
     nodes = ledger["nodes"]
     if not isinstance(nodes, dict):
         bad("E_SHAPE", None, "nodes must be an object")
@@ -1879,7 +2316,8 @@ def validate_ledger_shape(ledger):
         "state", "fingerprint", "fingerprint_inputs", "launch_nonce",
         "thread_id", "dispatch_issued", "arm", "resources",
         "holds_resources", "dependencies", "join", "receipt",
-        "receipt_sha256", "artifact_disposition", "reconciliation",
+        "receipt_sha256", "artifact_verification", "artifact_disposition",
+        "one_shot_authorization", "reconciliation",
         "supersedes", "retry_authorization", "dup_group", "created_at",
         "last_transition_at", "history",
     }
@@ -1968,6 +2406,47 @@ def validate_ledger_shape(ledger):
                                          not HEX64_RE.match(receipt_hash)):
             bad("E_SHAPE", ref,
                 "receipt_sha256 must be 64 lowercase hex or null")
+        verification = node["artifact_verification"]
+        if verification is not None:
+            valid_verification = (
+                isinstance(verification, dict) and set(verification) == {
+                    "status", "verified_at", "worktree", "receipt_sha256",
+                    "artifact_hashes"} and
+                verification.get("status") == "verified" and
+                all(isinstance(verification.get(key), str)
+                    for key in ("verified_at", "worktree", "receipt_sha256")) and
+                HEX64_RE.match(verification.get("receipt_sha256", "")) and
+                isinstance(verification.get("artifact_hashes"), dict) and
+                all(isinstance(key, str) and isinstance(value, str) and
+                    re.match(r"^sha256:[0-9a-f]{64}$", value)
+                    for key, value in verification.get(
+                        "artifact_hashes", {}).items()))
+            if not valid_verification:
+                bad("E_SHAPE", ref, "artifact_verification has invalid shape")
+        authorization = node["one_shot_authorization"]
+        if authorization is not None:
+            auth_keys = REQUIRED_AUTHORIZATION_KEYS | {
+                "source_sha256", "recorded_at"}
+            if not isinstance(authorization, dict) or \
+                    set(authorization) != auth_keys or \
+                    not isinstance(authorization.get(
+                        "authorization_version"), int) or \
+                    isinstance(authorization.get(
+                        "authorization_version"), bool) or \
+                    authorization.get("authorization_version") != 1 or \
+                    not isinstance(authorization.get("operator_id"), str) or \
+                    not ID_RE.match(authorization.get("operator_id", "")) or \
+                    not isinstance(authorization.get("authorization_nonce"), str) or \
+                    not NONCE_RE.match(authorization.get(
+                        "authorization_nonce", "")) or \
+                    not isinstance(authorization.get("source_sha256"), str) or \
+                    not HEX64_RE.match(authorization.get("source_sha256", "")) or \
+                    not all(isinstance(authorization.get(key), str)
+                            for key in ("run_id", "node_id",
+                                        "task_fingerprint", "issued_at",
+                                        "expires_at", "recorded_at")):
+                bad("E_SHAPE", ref,
+                    "one_shot_authorization has invalid shape")
         for key in ("artifact_disposition", "supersedes",
                     "retry_authorization", "dup_group"):
             if node[key] is not None and not isinstance(node[key], str):
@@ -2033,6 +2512,7 @@ def validate_ledger(ledger: dict):
         return findings
     launch_reg = ledger["nonces"].get("launch", {})
     arm_reg = ledger["nonces"].get("arm", {})
+    authorization_reg = ledger["nonces"].get("authorization", {})
     caps = ledger.get("host_capabilities", {})
 
     fingerprint_active = {}
@@ -2156,6 +2636,42 @@ def validate_ledger(ledger: dict):
         # one-shot invariants
         arm = node.get("arm") or {}
         if node.get("one_shot"):
+            authorization = node.get("one_shot_authorization") or {}
+            if not authorization:
+                bad("E_AUTHORIZATION", key,
+                    "ONE_SHOT requires a task-bound operator authorization")
+            else:
+                if authorization.get("run_id") != ledger["run_id"] or \
+                        authorization.get("node_id") != node["node_id"] or \
+                        authorization.get("task_fingerprint") != node[
+                            "fingerprint"]:
+                    bad("E_AUTHORIZATION", key,
+                        "one-shot authorization binding does not match this "
+                        "run, node, and fingerprint")
+                original = {field: authorization.get(field)
+                            for field in REQUIRED_AUTHORIZATION_KEYS}
+                expected_auth_hash = hashlib.sha256(json.dumps(
+                    original, sort_keys=True,
+                    separators=(",", ":")).encode()).hexdigest()
+                if authorization.get("source_sha256") != expected_auth_hash:
+                    bad("E_AUTHORIZATION", key,
+                        "one-shot authorization source hash does not match")
+                try:
+                    issued = _parse_utc_timestamp(
+                        authorization.get("issued_at"), "issued_at")
+                    expires = _parse_utc_timestamp(
+                        authorization.get("expires_at"), "expires_at")
+                    if expires <= issued or \
+                            expires - issued > timedelta(minutes=15):
+                        bad("E_AUTHORIZATION", key,
+                            "recorded one-shot authorization has an invalid "
+                            "lifetime")
+                except LedgerError as exc:
+                    bad("E_AUTHORIZATION", key, exc.message)
+                if authorization_reg.get(
+                        authorization.get("authorization_nonce")) != key:
+                    bad("E_AUTHORIZATION", key,
+                        "authorization nonce is not registered to this node")
             if bool(arm.get("acknowledged")) != bool(arm.get("spent")):
                 bad("E_ONESHOT", key,
                     "one-shot acknowledged and spent flags must agree")
@@ -2181,6 +2697,9 @@ def validate_ledger(ledger: dict):
                 elif bool(entry.get("spent")) != bool(arm.get("spent")):
                     bad("E_ONESHOT", key,
                         "arm nonce spent flag disagrees with the registry")
+        elif node.get("one_shot_authorization") is not None:
+            bad("E_AUTHORIZATION", key,
+                "non one-shot node carries one-shot authorization")
         elif arm.get("nonce") or arm.get("dispatched") or \
                 arm.get("acknowledged") or arm.get("spent"):
             bad("E_ONESHOT", key,
@@ -2222,9 +2741,28 @@ def validate_ledger(ledger: dict):
                     bad("E_DISPOSITION", key,
                         f"CURRENT artifact duplicates {previous_current}")
                 current_artifacts[node["fingerprint"]] = key
+            verification = node.get("artifact_verification")
+            hashes = (node.get("receipt") or {}).get("artifact_hashes", {})
+            if state == "SUCCEEDED" and any(
+                    resource["type"] == "path"
+                    for resource in node["resources"]):
+                if not verification:
+                    bad("E_ARTIFACT_VERIFY", key,
+                        "mutating success lacks independent artifact-byte "
+                        "verification")
+                elif verification.get("receipt_sha256") != node.get(
+                        "receipt_sha256") or verification.get(
+                            "artifact_hashes") != hashes:
+                    bad("E_ARTIFACT_VERIFY", key,
+                        "artifact verification does not bind the embedded "
+                        "receipt and its hashes")
+            elif verification is not None:
+                bad("E_ARTIFACT_VERIFY", key,
+                    "artifact verification is valid only for mutating success")
         elif node.get("receipt") is not None or \
                 node.get("receipt_sha256") is not None or \
-                node.get("artifact_disposition") is not None:
+                node.get("artifact_disposition") is not None or \
+                node.get("artifact_verification") is not None:
             bad("E_RECEIPT", key,
                 "this state may not carry a terminal receipt, receipt hash, "
                 "or artifact disposition")
@@ -2320,6 +2858,20 @@ def validate_ledger(ledger: dict):
             bad("E_NONCE", entry["node"],
                 f"arm nonce {nonce!r} is an alias, not the node's issued arm "
                 "nonce")
+    for nonce, target in authorization_reg.items():
+        if target not in ledger["nodes"]:
+            bad("E_NONCE", None,
+                f"authorization nonce {nonce!r} maps to missing node")
+        elif (ledger["nodes"][target].get("one_shot_authorization") or {}).get(
+                "authorization_nonce") != nonce:
+            bad("E_NONCE", target,
+                f"authorization nonce {nonce!r} is an alias, not the node's "
+                "issued authorization nonce")
+    registries = [set(launch_reg), set(arm_reg), set(authorization_reg)]
+    if any(registries[i] & registries[j] for i in range(3)
+           for j in range(i + 1, 3)):
+        bad("E_NONCE", None,
+            "launch, arm, and authorization nonce registries must be disjoint")
     for node_id, attempts in lineages.items():
         ordered = sorted(attempts, key=lambda item: item["attempt"])
         expected = list(range(1, len(ordered) + 1))
@@ -2382,26 +2934,27 @@ def op_validate(root, run_id, check_journal=False):
     ledger = load_ledger(root, run_id)
     findings = validate_ledger(ledger)
     if check_journal:
-        anchor, issue, _offset = scan_journal(root, run_id)
-        if issue:
+        journal = classify_journal(root, run_id, ledger)
+        if journal["status"].startswith("recoverable-"):
             findings.append(Finding(
-                "AMBIGUOUS", "A_JOURNAL_CORRUPT", None,
-                f"audit journal is not intact ({issue}); investigate "
+                "WARNING", "W_JOURNAL_RECOVERABLE", None,
+                f"write-ahead journal is safely recoverable "
+                f"({journal['reason']}); the next mutation will repair it"))
+        elif journal["status"] == "mismatch":
+            code = ("A_JOURNAL_CORRUPT" if journal["issue"] or
+                    "malformed" in (journal["reason"] or "") else
+                    "A_EXTERNAL_WRITER")
+            findings.append(Finding(
+                "AMBIGUOUS", code, None,
+                f"audit journal is not safely anchored "
+                f"({journal['reason']}); investigate "
                 "read-only, then recover --accept-current"))
-        if anchor is None and ledger["generation"] > 1:
+        elif journal["status"] == "absent":
             findings.append(Finding(
                 "AMBIGUOUS", "A_EXTERNAL_WRITER", None,
-                "audit journal missing while the ledger is past generation "
-                "1; the trail was deleted - re-anchor via recover "
+                "audit journal missing; initialization was interrupted or "
+                "the trail was deleted - re-anchor via recover "
                 "--accept-current after investigating"))
-        if anchor is not None:
-            current = _file_sha256(ledger_path(root, run_id))
-            if anchor.get("snapshot_sha256") != current:
-                findings.append(Finding(
-                    "AMBIGUOUS", "A_EXTERNAL_WRITER", None,
-                    "ledger hash differs from the last journal anchor: an "
-                    "unaccounted writer or interrupted append; investigate "
-                    "read-only, then recover --accept-current"))
     return ledger, findings
 
 
@@ -2468,17 +3021,24 @@ def op_recover(root, run_id, apply_changes=False, clear_lock=False,
                 exit_code_for(findings),
                 "refusing to re-anchor an invalid ledger:\n" +
                 "\n".join(str(finding) for finding in violations))
-        anchor, journal_issue, last_good = scan_journal(root, run_id)
-        current = _file_sha256(ledger_path(root, run_id))
-        if journal_issue:
-            report["journal"] = f"MISMATCH: {journal_issue}"
-        elif anchor is None:
-            report["journal"] = ("absent" if ledger["generation"] == 1 else
-                                 "MISMATCH: journal deleted after mutations")
-        else:
+        journal = classify_journal(root, run_id, ledger)
+        journal_issue = journal["issue"]
+        last_good = journal["last_good"]
+        current = journal["current"]
+        if journal["status"].startswith("recoverable-"):
             report["journal"] = (
-                "anchored" if anchor.get("snapshot_sha256") == current else
-                "MISMATCH: unaccounted writer or interrupted append")
+                f"RECOVERABLE: {journal['status']}: {journal['reason']}")
+            if apply_changes:
+                repair_recoverable_journal(
+                    root, run_id, ledger, journal, f"recovery:{writer}")
+                report["actions"].append("repaired interrupted WAL record")
+                report["journal"] = "anchored"
+        elif journal["status"] == "anchored":
+            report["journal"] = "anchored"
+        elif journal["status"] == "absent":
+            report["journal"] = "MISMATCH: journal absent"
+        else:
+            report["journal"] = f"MISMATCH: {journal['reason']}"
         if report["journal"].startswith("MISMATCH") and accept_current:
             if not evidence:
                 raise LedgerError(EXIT_USAGE,
@@ -2534,6 +3094,69 @@ def op_show(root, run_id):
     capability_row = (f"capability tier {profile['tier']} "
                       f"disabled={disabled}")
     return ledger, [header, capability_row] + rows
+
+
+def op_doctor(root, run_id):
+    """Return a read-only, conservative continuation and evidence report."""
+    ledger = load_ledger(root, run_id)
+    findings = validate_ledger(ledger)
+    blocking = _blocking_semantic_findings(findings)
+    journal = classify_journal(root, run_id, ledger)
+    unknown = unresolved_unknowns(ledger)
+    in_flight = []
+    artifacts = []
+    for ref, node in sorted(ledger["nodes"].items()):
+        if node["state"] == "LAUNCHING" and node["dispatch_issued"]:
+            in_flight.append({"node": ref, "kind": "dispatch-unresolved"})
+        if node["state"] == "ARMED" and node["arm"]["dispatched"] and \
+                not node["arm"]["acknowledged"]:
+            in_flight.append({"node": ref, "kind": "arm-unresolved"})
+        if node["state"] == "SUCCEEDED":
+            receipt = node.get("receipt") or {}
+            verification = node.get("artifact_verification")
+            artifacts.append({
+                "node": ref,
+                "artifact": receipt.get("artifact"),
+                "disposition": node.get("artifact_disposition"),
+                "verification": (
+                    "verified-local-bytes" if verification else
+                    ("unverified-pure-result" if node["class"] == "PURE"
+                     else "unverified-external-effect")),
+                "receipt_sha256": node.get("receipt_sha256"),
+                "artifact_hashes": receipt.get("artifact_hashes", {}),
+            })
+    journal_safe = journal["status"] == "anchored" or \
+        journal["status"].startswith("recoverable-")
+    resumable = not blocking and not unknown and not in_flight and journal_safe
+    current_hash = _file_sha256(ledger_path(root, run_id))
+    resume_token = None
+    if resumable:
+        resume_token = hashlib.sha256(json.dumps({
+            "run_id": run_id, "generation": ledger["generation"],
+            "ledger_sha256": current_hash,
+        }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    profile = capability_profile(ledger.get("host_capabilities", {}))
+    return {
+        "run_id": run_id,
+        "generation": ledger["generation"],
+        "protocol_version": ledger["protocol_version"],
+        "schema_version": ledger["schema_version"],
+        "safety_badge": (
+            "RECORDED-CONSISTENCY ONLY — host capabilities and external "
+            "effects remain unverified"),
+        "capabilities": profile,
+        "capability_evidence": (
+            "self-attested host declarations; not independently verified"),
+        "journal": {
+            "status": journal["status"], "reason": journal["reason"],
+            "auto_recoverable": journal["status"].startswith("recoverable-"),
+        },
+        "unresolved_unknown": unknown,
+        "in_flight_ambiguity": in_flight,
+        "artifacts": artifacts,
+        "findings": [finding.as_dict() for finding in findings],
+        "resume": {"resumable": resumable, "token": resume_token},
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -2608,6 +3231,8 @@ def build_parser():
         "capture-baseline",
         help="capture a read-only Git HEAD and dirty-state digest")
     p.add_argument("--worktree", default=".")
+    p.add_argument("--include-ignored", action="store_true",
+                   help="also hash bounded ignored-file identities and bytes")
 
     p = sub.add_parser(
         "verify-baseline",
@@ -2615,6 +3240,8 @@ def build_parser():
     p.add_argument("--worktree", default=".")
     p.add_argument("--expected-revision", required=True)
     p.add_argument("--expected-dirty-digest", required=True)
+    p.add_argument("--expected-ignored-digest",
+                   help="also verify the ignored-file content digest")
 
     p = sub.add_parser("create-node", help="add a PLANNED node")
     common(p)
@@ -2642,6 +3269,9 @@ def build_parser():
                    help="any/quorum research duplication group (PURE only)")
     p.add_argument("--fingerprint", dest="supplied_fingerprint",
                    help="optional cross-check of a precomputed fingerprint")
+    p.add_argument("--one-shot-authorization",
+                   dest="one_shot_authorization_file",
+                   help="operator-supplied, task-bound authorization JSON")
 
     p = sub.add_parser("record-dispatch",
                        help="record that the create call was issued")
@@ -2664,6 +3294,18 @@ def build_parser():
     p.add_argument("--readiness-evidence")
     p.add_argument("--arm-acknowledged", action="store_true")
     p.add_argument("--termination-evidence")
+    p.add_argument("--verification-worktree",
+                   help="worktree used to recompute receipt artifact hashes")
+
+    p = sub.add_parser(
+        "verify-artifacts",
+        help="read-only recomputation of receipt artifact hashes")
+    common(p, mutating=False)
+    p.add_argument("node")
+    p.add_argument("--receipt", dest="receipt_file", required=True)
+    p.add_argument("--worktree", required=True)
+    p.add_argument("--expect-status", default="SUCCEEDED",
+                   choices=sorted(TERMINAL_STATES - {"UNKNOWN"}))
 
     p = sub.add_parser("release-resources", help="release held scopes")
     common(p)
@@ -2700,6 +3342,8 @@ def build_parser():
 
     p = sub.add_parser("show", help="print a compact run table")
     common(p, mutating=False)
+    p = sub.add_parser("doctor", help="read-only safety and resume report")
+    common(p, mutating=False)
     return parser
 
 
@@ -2727,12 +3371,14 @@ def main(argv=None) -> int:
         elif args.command == "verify-reference-set":
             print(json.dumps(verify_reference_set(), indent=2, sort_keys=True))
         elif args.command == "capture-baseline":
-            print(json.dumps(capture_git_baseline(args.worktree), indent=2,
+            print(json.dumps(capture_git_baseline(
+                args.worktree, include_ignored=args.include_ignored), indent=2,
                              sort_keys=True))
         elif args.command == "verify-baseline":
             print(json.dumps(verify_git_baseline(
                 args.worktree, args.expected_revision,
-                args.expected_dirty_digest), indent=2, sort_keys=True))
+                args.expected_dirty_digest,
+                args.expected_ignored_digest), indent=2, sort_keys=True))
         elif args.command == "create-node":
             ledger = op_create_node(
                 args.root, args.run_id, args.writer, args.expect_generation,
@@ -2745,7 +3391,9 @@ def main(argv=None) -> int:
                 supersedes=args.supersedes,
                 authorize_retry=args.authorize_retry,
                 dup_group=args.dup_group,
-                supplied_fingerprint=args.supplied_fingerprint)
+                supplied_fingerprint=args.supplied_fingerprint,
+                one_shot_authorization_file=
+                args.one_shot_authorization_file)
             print(f"created node; ledger at generation {ledger['generation']}")
         elif args.command == "record-dispatch":
             ledger = op_record_dispatch(args.root, args.run_id, args.writer,
@@ -2764,8 +3412,14 @@ def main(argv=None) -> int:
                 arm_nonce=args.arm_nonce,
                 readiness_evidence=args.readiness_evidence,
                 arm_acknowledged=args.arm_acknowledged,
-                termination_evidence=args.termination_evidence)
+                termination_evidence=args.termination_evidence,
+                verification_worktree=args.verification_worktree)
             print(f"transitioned; generation {ledger['generation']}")
+        elif args.command == "verify-artifacts":
+            report = op_verify_artifacts(
+                args.root, args.run_id, args.node, args.receipt_file,
+                args.worktree, args.expect_status)
+            print(json.dumps(report, indent=2, sort_keys=True))
         elif args.command == "release-resources":
             ledger = op_release_resources(args.root, args.run_id, args.writer,
                                           args.expect_generation, args.node,
@@ -2800,6 +3454,9 @@ def main(argv=None) -> int:
         elif args.command == "show":
             ledger, rows = op_show(args.root, args.run_id)
             print("\n".join(rows))
+        elif args.command == "doctor":
+            print(json.dumps(op_doctor(args.root, args.run_id),
+                             indent=2, sort_keys=True))
         return EXIT_OK
     except LedgerError as exc:
         print(f"ERROR({exc.exit_code}): {exc.message}", file=sys.stderr)
