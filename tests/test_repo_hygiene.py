@@ -178,6 +178,7 @@ class TestRepoHygiene(unittest.TestCase):
         self.assertIn("actions/checkout@v7", workflow)
         self.assertIn("actions/setup-python@v6", workflow)
         self.assertIn("actions/upload-artifact@v7", workflow)
+        self.assertIn("cache-dependency-path: requirements-dev.txt", workflow)
         self.assertIn("python -m coverage report", workflow)
         coverage = (REPO_ROOT / ".coveragerc").read_text("utf-8")
         self.assertRegex(coverage, r"(?m)^fail_under\s*=\s*85$")
