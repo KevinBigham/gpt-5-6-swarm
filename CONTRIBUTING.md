@@ -1,0 +1,17 @@
+# Contributing
+
+Contributions are welcome when they make the orchestration protocol safer, clearer, faster, or easier to verify.
+
+## Ground rules
+
+- Preserve the upstream attribution and MIT notice in `LICENSE` and `THIRD_PARTY_NOTICES.md`.
+- Identify any newly incorporated third-party material, its source revision, and its license.
+- Do not weaken fail-closed behavior merely to increase apparent concurrency.
+- Keep worker roles bounded, artifacts checkable, and shared mutations serialized.
+- Update the relevant route, concurrency, and reporting references together when changing a cross-cutting invariant.
+
+By contributing, you agree that your contribution is licensed under this repository's MIT License.
+
+## Review expectations
+
+Changes to launch identity, cancellation, one-shot behavior, resource ownership, or integration should include an adversarial review explaining how duplicate work, hidden writers, and ambiguous outcomes remain blocked.
