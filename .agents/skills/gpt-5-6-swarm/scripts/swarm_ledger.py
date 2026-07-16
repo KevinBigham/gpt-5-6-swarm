@@ -12,6 +12,8 @@ references/CONCURRENCY.md) into executable, offline-testable checks:
   * ledger-generation monotonicity (compare-and-set on every mutation)
   * fail-closed UNKNOWN handling with explicit reconciliation
   * atomic persistence with crash recovery reporting
+  * fail-closed protocol-reference compatibility checks
+  * machine-readable host-capability and Git-baseline reporting
 
 Design principles:
 
@@ -26,7 +28,7 @@ Design principles:
   * Ambiguity is preserved, not resolved: UNKNOWN stays UNKNOWN until a
     human/coordinator records reconciliation evidence.
 
-Protocol version: 1.1.0   Schema version: 1   (see references/ENFORCEMENT.md)
+Protocol version: 1.2.0   Schema version: 1   (see references/ENFORCEMENT.md)
 """
 
 from __future__ import annotations
@@ -38,16 +40,37 @@ import os
 import re
 import secrets
 import stat
+import subprocess
 import sys
 import tempfile
 import unicodedata
 from datetime import datetime, timezone
 
-TOOL_VERSION = "0.1.0"
-PROTOCOL_VERSION = "1.1.0"
+TOOL_VERSION = "0.2.0"
+PROTOCOL_VERSION = "1.2.0"
 SCHEMA_VERSION = 1
 SUPPORTED_SCHEMA_VERSIONS = {1}
-SUPPORTED_PROTOCOL_SERIES = {(1, 1)}
+SUPPORTED_PROTOCOL_SERIES = {(1, 2)}
+
+REFERENCE_SET_STAMP = f"Protocol reference set: `{PROTOCOL_VERSION}`."
+REFERENCE_SET_FILES = (
+    "SKILL.md",
+    "DEPLOYMENT.md",
+    "references/CONCURRENCY.md",
+    "references/ENFORCEMENT.md",
+    "references/HOSTS.md",
+    "references/REPORTING.md",
+    "references/ROUTES.md",
+    "references/SCHEDULING.md",
+)
+
+MINIMUM_FANOUT_CAPABILITIES = (
+    "thread_creation", "thread_listing", "result_collection",
+)
+HOST_INTEGRATED_CAPABILITIES = MINIMUM_FANOUT_CAPABILITIES + (
+    "child_turn_read", "unique_launch_discovery", "cancel_interrupt",
+    "model_selection", "effort_selection", "worktree_control",
+)
 
 # ---------------------------------------------------------------------------
 # Exit codes (machine-readable contract; see references/ENFORCEMENT.md)
@@ -217,6 +240,154 @@ def compute_fingerprint(outcome: str, base_revision: str, inputs_digest: str,
     }
     payload = json.dumps(doc, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Packaged protocol compatibility and host/worktree capability evidence
+# ---------------------------------------------------------------------------
+def _skill_dir() -> str:
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def verify_reference_set(skill_dir: str = None):
+    """Fail closed when packaged normative documents are missing or mixed.
+
+    Version stamps gate compatibility, not authorship or content integrity.
+    Repository tests separately check links and cross-file claims.
+    """
+    base = os.path.abspath(skill_dir or _skill_dir())
+    checked = []
+    for relative in REFERENCE_SET_FILES:
+        path = os.path.join(base, *relative.split("/"))
+        try:
+            _lstat_regular(path, "protocol reference")
+        except LedgerError as exc:
+            raise LedgerError(
+                EXIT_VERSION,
+                f"protocol reference {relative} is missing or unsafe: "
+                f"{exc.message}")
+        flags = os.O_RDONLY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        try:
+            fd = os.open(path, flags)
+        except OSError as exc:
+            raise LedgerError(
+                EXIT_VERSION, f"cannot read protocol reference {relative}: {exc}")
+        try:
+            with os.fdopen(fd, "rb") as handle:
+                fd = -1
+                info = os.fstat(handle.fileno())
+                if not stat.S_ISREG(info.st_mode) or info.st_size > 1_000_000:
+                    raise LedgerError(
+                        EXIT_VERSION,
+                        f"protocol reference {relative} is not a bounded "
+                        "regular file")
+                try:
+                    content = handle.read().decode("utf-8")
+                except UnicodeDecodeError as exc:
+                    raise LedgerError(
+                        EXIT_VERSION,
+                        f"protocol reference {relative} is not UTF-8: {exc}")
+        finally:
+            if fd >= 0:
+                os.close(fd)
+        stamps = [line.strip() for line in content.splitlines()
+                  if line.strip().startswith("Protocol reference set:")]
+        if stamps != [REFERENCE_SET_STAMP]:
+            raise LedgerError(
+                EXIT_VERSION,
+                f"protocol reference {relative} must contain exactly one "
+                f"exact stamp {REFERENCE_SET_STAMP!r}; missing, duplicate, "
+                "or mixed reference sets are refused")
+        checked.append(relative)
+    return {
+        "protocol_version": PROTOCOL_VERSION,
+        "reference_set": PROTOCOL_VERSION,
+        "checked": checked,
+    }
+
+
+def capability_profile(capabilities):
+    """Derive an honest, display-only host tier from declared capabilities."""
+    caps = capabilities or {}
+    missing_minimum = [key for key in MINIMUM_FANOUT_CAPABILITIES
+                       if caps.get(key) is not True]
+    if missing_minimum:
+        tier = "serial"
+    elif all(caps.get(key) is True for key in HOST_INTEGRATED_CAPABILITIES):
+        tier = "host-integrated"
+    elif caps.get("worktree_control") is True:
+        tier = "ledger-assisted"
+    else:
+        tier = "ledger-assisted-read-only"
+
+    disabled = []
+    if not (caps.get("model_selection") is True and
+            caps.get("effort_selection") is True):
+        disabled.append("model-specific-routing")
+    if caps.get("unique_launch_discovery") is not True:
+        disabled.append("guarded-retries")
+    if caps.get("one_shot_fence") is not True:
+        disabled.append("one-shot")
+    if caps.get("cancel_interrupt") is not True:
+        disabled.append("authoritative-cancel")
+    if caps.get("worktree_control") is not True:
+        disabled.append("isolated-write-fanout")
+    if caps.get("resource_fencing") is not True:
+        disabled.append("shared-resource-mutation")
+    if caps.get("background_sessions") is not True:
+        disabled.append("background-work")
+    return {"tier": tier, "disabled": disabled,
+            "missing_minimum": missing_minimum}
+
+
+def _git(worktree, *args):
+    try:
+        result = subprocess.run(
+            ["git", "-C", worktree, *args], capture_output=True,
+            timeout=30, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise LedgerError(EXIT_USAGE,
+                          f"cannot inspect Git worktree {worktree!r}: {exc}")
+    if result.returncode != 0:
+        detail = result.stderr.decode("utf-8", "replace").strip()
+        raise LedgerError(
+            EXIT_USAGE,
+            f"Git baseline command failed for {worktree!r}: {detail}")
+    return result.stdout
+
+
+def capture_git_baseline(worktree: str):
+    """Return stable HEAD and dirty-state evidence without mutating Git."""
+    root = os.path.abspath(worktree)
+    revision = _git(root, "rev-parse", "--verify", "HEAD").decode(
+        "ascii", "strict").strip()
+    status = _git(root, "-c", "core.quotepath=false", "status",
+                  "--porcelain=v1", "-z", "--untracked-files=all",
+                  "--ignore-submodules=none", "--", ".",
+                  ":(exclude).swarm/runs/**")
+    return {
+        "worktree": root,
+        "revision": revision,
+        "dirty": bool(status),
+        "dirty_digest": "sha256:" + hashlib.sha256(status).hexdigest(),
+    }
+
+
+def verify_git_baseline(worktree: str, expected_revision: str,
+                        expected_dirty_digest: str):
+    actual = capture_git_baseline(worktree)
+    mismatches = []
+    if actual["revision"] != expected_revision:
+        mismatches.append(
+            f"revision expected {expected_revision}, got {actual['revision']}")
+    if actual["dirty_digest"] != expected_dirty_digest:
+        mismatches.append(
+            "dirty-state digest changed (unaccounted worktree drift)")
+    if mismatches:
+        raise LedgerError(EXIT_AMBIGUOUS, "; ".join(mismatches))
+    return actual
 
 
 # ---------------------------------------------------------------------------
@@ -963,6 +1134,7 @@ def mutate(root, run_id, writer, expect_generation, action, mutator):
                 "mutation aborted; it would create violations:\n" +
                 "\n".join(str(f) for f in post))
         ledger["generation"] += 1
+        ledger["tool_version"] = TOOL_VERSION
         ledger["updated_at"] = _now()
         snapshot = atomic_write_ledger(root, run_id, ledger)
         journal_append(root, run_id, {
@@ -979,6 +1151,8 @@ def mutate(root, run_id, writer, expect_generation, action, mutator):
 # Operations
 # ---------------------------------------------------------------------------
 def op_init(root, run_id, task_type, task_digest, capabilities, writer):
+    # Refuse a partially upgraded skill before creating any runtime state.
+    verify_reference_set()
     rdir = ensure_runtime_directory(root, run_id, create=True)
     token = acquire_lock(root, run_id, writer)
     try:
@@ -997,11 +1171,18 @@ def op_init(root, run_id, task_type, task_digest, capabilities, writer):
                 raise LedgerError(EXIT_USAGE,
                                   f"capability {pair!r} must be key=value")
             key, value = pair.split("=", 1)
+            key = key.strip()
+            if not ID_RE.match(key):
+                raise LedgerError(EXIT_USAGE,
+                                  f"capability key {key!r} fails id grammar")
+            if key in caps:
+                raise LedgerError(EXIT_USAGE,
+                                  f"capability {key!r} was declared twice")
             normalized = value.strip().lower()
             if normalized not in {"true", "false"}:
                 raise LedgerError(EXIT_USAGE,
                                   f"capability {pair!r} must end in true or false")
-            caps[key.strip()] = normalized == "true"
+            caps[key] = normalized == "true"
         ledger = {
             "schema_version": SCHEMA_VERSION,
             "protocol_version": PROTOCOL_VERSION,
@@ -1079,6 +1260,12 @@ def op_create_node(root, run_id, writer, expect_generation, *, node_id,
                 f"class {klass} requires the unique_launch_discovery host "
                 "capability; narrow the route to read-only fan-out or serial "
                 "work (SKILL.md preflight)")
+        if klass == "ONE_SHOT" and caps.get("one_shot_fence") is not True:
+            raise LedgerError(
+                EXIT_SEMANTIC,
+                "class ONE_SHOT requires one_shot_fence=true: declare it only "
+                "after verifying a fresh output target, target-side "
+                "idempotency key, transaction, or effective external fence")
         pending = unresolved_unknowns(ledger)
         if pending and klass != "PURE":
             raise LedgerError(
@@ -2097,6 +2284,10 @@ def validate_ledger(ledger: dict):
             bad("E_CAPABILITY", key,
                 f"class {node.get('class')} recorded without the "
                 "unique_launch_discovery capability")
+        if node.get("class") == "ONE_SHOT" and \
+                caps.get("one_shot_fence") is not True:
+            bad("E_CAPABILITY", key,
+                "ONE_SHOT recorded without one_shot_fence capability")
         receipt = node.get("receipt") or {}
         spawned = ((receipt.get("processes") or {}).get("spawned") or [])
         if spawned and caps.get("background_sessions") is not True:
@@ -2338,7 +2529,11 @@ def op_show(root, run_id):
     header = (f"run {ledger['run_id']} gen {ledger['generation']} "
               f"protocol {ledger['protocol_version']} "
               f"schema {ledger['schema_version']}")
-    return ledger, [header] + rows
+    profile = capability_profile(ledger.get("host_capabilities", {}))
+    disabled = ",".join(profile["disabled"]) or "none"
+    capability_row = (f"capability tier {profile['tier']} "
+                      f"disabled={disabled}")
+    return ledger, [header, capability_row] + rows
 
 
 # ---------------------------------------------------------------------------
@@ -2404,6 +2599,22 @@ def build_parser():
                         "'none' (do not include a 'sha256:' prefix)")
     p.add_argument("--write-scope", action="append", default=[],
                    metavar="type:id")
+
+    sub.add_parser(
+        "verify-reference-set",
+        help="verify that all packaged normative documents match this tool")
+
+    p = sub.add_parser(
+        "capture-baseline",
+        help="capture a read-only Git HEAD and dirty-state digest")
+    p.add_argument("--worktree", default=".")
+
+    p = sub.add_parser(
+        "verify-baseline",
+        help="fail closed if Git HEAD or dirty-state digest drifted")
+    p.add_argument("--worktree", default=".")
+    p.add_argument("--expected-revision", required=True)
+    p.add_argument("--expected-dirty-digest", required=True)
 
     p = sub.add_parser("create-node", help="add a PLANNED node")
     common(p)
@@ -2504,12 +2715,24 @@ def main(argv=None) -> int:
         if args.command == "init":
             ledger = op_init(args.root, args.run_id, args.task_type,
                              args.task_digest, args.capability, args.writer)
+            profile = capability_profile(ledger["host_capabilities"])
+            disabled = ",".join(profile["disabled"]) or "none"
             print(f"initialized run {args.run_id} at generation "
-                  f"{ledger['generation']}")
+                  f"{ledger['generation']}; capability tier "
+                  f"{profile['tier']}; disabled={disabled}")
         elif args.command == "fingerprint":
             print(compute_fingerprint(args.outcome, args.base_revision,
                                       args.inputs_digest, args.write_scope,
                                       args.gate))
+        elif args.command == "verify-reference-set":
+            print(json.dumps(verify_reference_set(), indent=2, sort_keys=True))
+        elif args.command == "capture-baseline":
+            print(json.dumps(capture_git_baseline(args.worktree), indent=2,
+                             sort_keys=True))
+        elif args.command == "verify-baseline":
+            print(json.dumps(verify_git_baseline(
+                args.worktree, args.expected_revision,
+                args.expected_dirty_digest), indent=2, sort_keys=True))
         elif args.command == "create-node":
             ledger = op_create_node(
                 args.root, args.run_id, args.writer, args.expect_generation,

@@ -249,13 +249,13 @@
       "nonce-recon-0001": "recon#1"
     }
   },
-  "protocol_version": "1.1.0",
+  "protocol_version": "1.2.0",
   "run_id": "example-run",
   "schema_version": 1,
   "task": {
     "description_digest": "sha256:demo-task-reference",
     "type": "build"
   },
-  "tool_version": "0.1.0",
+  "tool_version": "0.2.0",
   "updated_at": "2026-07-16T02:28:15.833014+00:00"
 }

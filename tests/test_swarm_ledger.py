@@ -1,8 +1,8 @@
 """Deterministic, offline scenario tests for scripts/swarm_ledger.py.
 
-Every scenario required by the Phase 1 brief maps to at least one test here,
-and each enforced invariant has both an accepting and a rejecting side where
-applicable. No network, no live model calls, no timing dependence.
+Every represented safety invariant maps to at least one test here, and each
+enforced invariant has both an accepting and a rejecting side where applicable.
+No network or live model calls are used.
 """
 
 import importlib.util
@@ -36,7 +36,9 @@ class LedgerHarness(unittest.TestCase):
         self.dir = tempfile.mkdtemp(prefix="swarm-test-")
         self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
         sl.op_init(self.dir, self.RUN, "test", "digest-of-task",
-                   ["thread_listing=true", "unique_launch_discovery=true",
+                   ["thread_creation=true", "thread_listing=true",
+                    "result_collection=true", "child_turn_read=true",
+                    "unique_launch_discovery=true", "one_shot_fence=true",
                     "background_sessions=false"], "tester")
         self._nonce = 0
 
@@ -463,6 +465,38 @@ class TestReceipts(LedgerHarness):
                 receipt_file=clean)
         self.create("a")
 
+    def test_receipt_collection_and_scope_shapes_fail_closed(self):
+        self.create("writer", klass="ISOLATED",
+                    resources=["cache:writer", "path:src/api"],
+                    model="gpt-5.6-terra", effort="high")
+        self.to_running("writer#1")
+        cases = [
+            (sl.EXIT_SHAPE, {"commands": "not-a-list"}),
+            (sl.EXIT_SHAPE, {"commands": [{"command": "", "exit_code": 0}]}),
+            (sl.EXIT_SHAPE, {"commands": [{"command": "test", "exit_code": 0,
+                                            "extra": True}]}),
+            (sl.EXIT_SHAPE, {"commands": [{"command": "test", "exit_code": 0,
+                                            "result": 7}]}),
+            (sl.EXIT_SHAPE, {"cleanup_items": "not-a-list"}),
+            (sl.EXIT_SEMANTIC,
+             {"resources_released": ["path:src/api", "path:src/api"]}),
+            (sl.EXIT_SEMANTIC, {"resources_released": ["path:other"]}),
+            (sl.EXIT_SEMANTIC, {"resources_released": ["path:src/api"]}),
+            (sl.EXIT_SEMANTIC,
+             {"touched_paths": ["src/api/x.py", "src/api/x.py"]}),
+            (sl.EXIT_SEMANTIC, {"touched_paths": ["/tmp/escape"]}),
+        ]
+        for exit_code, overrides in cases:
+            path = self.receipt_for("writer#1", **overrides)
+            self.expect(exit_code, self.go, "writer#1", "SUCCEEDED",
+                        receipt_file=path)
+
+        self.create("reader")
+        self.to_running("reader#1")
+        path = self.receipt_for("reader#1", touched_paths=["src/read.txt"])
+        self.expect(sl.EXIT_SEMANTIC, self.go, "reader#1", "SUCCEEDED",
+                    receipt_file=path)
+
 
 # ---------------------------------------------------------------------------
 # Required scenario 9: failure after an external mutation (guarded retry)
@@ -518,6 +552,21 @@ class TestOneShot(LedgerHarness):
         self.succeed("shot#1")
         ledger = sl.load_ledger(self.dir, self.RUN)
         self.assertTrue(ledger["nonces"]["arm"]["arm-nonce-000001"]["spent"])
+
+    def test_one_shot_requires_declared_fence(self):
+        bare = tempfile.mkdtemp(prefix="swarm-no-shot-fence-")
+        self.addCleanup(shutil.rmtree, bare, ignore_errors=True)
+        sl.op_init(bare, "bare-run", "test", "digest",
+                   ["unique_launch_discovery=true"], "tester")
+        with self.assertRaises(sl.LedgerError) as ctx:
+            sl.op_create_node(
+                bare, "bare-run", "tester", 1, node_id="shot",
+                klass="ONE_SHOT", model="gpt-5.6-terra", effort="high",
+                outcome="fire once", base_revision="r", inputs_digest="none",
+                gate="g", launch_nonce="nonce-bare-shot-1",
+                resources=["db:prod"], dependencies=[], join="all")
+        self.assertEqual(ctx.exception.exit_code, sl.EXIT_SEMANTIC)
+        self.assertIn("one_shot_fence=true", ctx.exception.message)
 
     def test_one_shot_double_arm_rejected(self):
         self.arm()
@@ -674,6 +723,23 @@ class TestRecovery(LedgerHarness):
                       evidence="hand edit was my own timestamp fix",
                       writer="tester")
         self.create("b")  # accepted and re-anchored
+
+    def test_stale_lock_recovery_requires_standalone_evidence(self):
+        token = sl.acquire_lock(self.dir, self.RUN, "test-stale-holder")
+        self.assertTrue(token)
+        self.expect(sl.EXIT_USAGE, sl.op_recover, self.dir, self.RUN,
+                    apply_changes=True, clear_lock=True,
+                    evidence="holder was never started")
+        self.expect(sl.EXIT_USAGE, sl.op_recover, self.dir, self.RUN,
+                    clear_lock=True)
+        _, report = sl.op_recover(
+            self.dir, self.RUN, clear_lock=True,
+            evidence="test-created holder performed no mutation")
+        self.assertIsNone(report["lock"])
+        self.assertTrue(any("cleared stale lock" in action
+                            for action in report["actions"]))
+        self.expect(sl.EXIT_USAGE, sl.op_recover, self.dir, self.RUN,
+                    clear_lock=True, evidence="already clear")
 
 
 # ---------------------------------------------------------------------------
@@ -1125,6 +1191,218 @@ class TestHardening(LedgerHarness):
         self.assertEqual(sl.exit_code_for(findings), sl.EXIT_CORRUPT)
 
 
+class TestReferenceSet(unittest.TestCase):
+    def test_current_reference_set_passes(self):
+        report = sl.verify_reference_set()
+        self.assertEqual(report["protocol_version"], sl.PROTOCOL_VERSION)
+        self.assertEqual(set(report["checked"]), set(sl.REFERENCE_SET_FILES))
+
+    def test_mixed_reference_set_fails_closed(self):
+        source = TOOL_PATH.parents[1]
+        target_root = tempfile.mkdtemp(prefix="swarm-mixed-reference-")
+        self.addCleanup(shutil.rmtree, target_root, ignore_errors=True)
+        target = Path(target_root, "gpt-5-6-swarm")
+        shutil.copytree(source, target)
+        route = target / "references" / "ROUTES.md"
+        route.write_text(route.read_text(encoding="utf-8").replace(
+            sl.REFERENCE_SET_STAMP, "Protocol reference set: `1.1.0`."),
+            encoding="utf-8")
+        with self.assertRaises(sl.LedgerError) as ctx:
+            sl.verify_reference_set(str(target))
+        self.assertEqual(ctx.exception.exit_code, sl.EXIT_VERSION)
+        self.assertIn("mixed reference sets", ctx.exception.message)
+
+    def test_missing_reference_fails_as_version_error(self):
+        source = TOOL_PATH.parents[1]
+        target_root = tempfile.mkdtemp(prefix="swarm-missing-reference-")
+        self.addCleanup(shutil.rmtree, target_root, ignore_errors=True)
+        target = Path(target_root, "gpt-5-6-swarm")
+        shutil.copytree(source, target)
+        (target / "references" / "HOSTS.md").unlink()
+        with self.assertRaises(sl.LedgerError) as ctx:
+            sl.verify_reference_set(str(target))
+        self.assertEqual(ctx.exception.exit_code, sl.EXIT_VERSION)
+        self.assertIn("missing or unsafe", ctx.exception.message)
+
+    def test_duplicate_reference_stamp_fails_closed(self):
+        source = TOOL_PATH.parents[1]
+        target_root = tempfile.mkdtemp(prefix="swarm-duplicate-reference-")
+        self.addCleanup(shutil.rmtree, target_root, ignore_errors=True)
+        target = Path(target_root, "gpt-5-6-swarm")
+        shutil.copytree(source, target)
+        route = target / "references" / "ROUTES.md"
+        route.write_text(
+            route.read_text(encoding="utf-8") + "\n" +
+            sl.REFERENCE_SET_STAMP + "\n", encoding="utf-8")
+        with self.assertRaises(sl.LedgerError) as ctx:
+            sl.verify_reference_set(str(target))
+        self.assertEqual(ctx.exception.exit_code, sl.EXIT_VERSION)
+        self.assertIn("exactly one exact stamp", ctx.exception.message)
+
+
+class TestCapabilities(unittest.TestCase):
+    def test_profiles_are_honest_and_feature_specific(self):
+        serial = sl.capability_profile({})
+        self.assertEqual(serial["tier"], "serial")
+        self.assertIn("thread_creation", serial["missing_minimum"])
+        read_only = sl.capability_profile({
+            "thread_creation": True, "thread_listing": True,
+            "result_collection": True})
+        self.assertEqual(read_only["tier"], "ledger-assisted-read-only")
+        self.assertIn("model-specific-routing", read_only["disabled"])
+        integrated = sl.capability_profile({
+            key: True for key in sl.HOST_INTEGRATED_CAPABILITIES})
+        self.assertEqual(integrated["tier"], "host-integrated")
+        self.assertNotIn("model-specific-routing", integrated["disabled"])
+
+
+class TestGitBaseline(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="swarm-git-baseline-")
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+        commands = [
+            ["git", "init", "-q"],
+            ["git", "config", "user.name", "Swarm Tests"],
+            ["git", "config", "user.email", "swarm@example.invalid"],
+        ]
+        for command in commands:
+            subprocess.run(command, cwd=self.dir, check=True,
+                           capture_output=True)
+        Path(self.dir, "tracked.txt").write_text("baseline\n", "utf-8")
+        subprocess.run(["git", "add", "tracked.txt"], cwd=self.dir,
+                       check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-q", "-m", "baseline"],
+                       cwd=self.dir, check=True, capture_output=True)
+
+    def test_capture_and_verify_detects_dirty_drift(self):
+        baseline = sl.capture_git_baseline(self.dir)
+        self.assertFalse(baseline["dirty"])
+        self.assertEqual(sl.verify_git_baseline(
+            self.dir, baseline["revision"], baseline["dirty_digest"]),
+            baseline)
+        Path(self.dir, "tracked.txt").write_text("drift\n", "utf-8")
+        with self.assertRaises(sl.LedgerError) as ctx:
+            sl.verify_git_baseline(
+                self.dir, baseline["revision"], baseline["dirty_digest"])
+        self.assertEqual(ctx.exception.exit_code, sl.EXIT_AMBIGUOUS)
+        self.assertIn("dirty-state", ctx.exception.message)
+
+
+class TestProcessConcurrency(unittest.TestCase):
+    def test_real_process_generation_race(self):
+        workdir = tempfile.mkdtemp(prefix="swarm-process-race-")
+        self.addCleanup(shutil.rmtree, workdir, ignore_errors=True)
+        init = subprocess.run(
+            [sys.executable, str(TOOL_PATH), "init", "--root", workdir,
+             "--run-id", "race", "--task-type", "test",
+             "--task-digest", "digest"], capture_output=True, text=True,
+            timeout=60)
+        self.assertEqual(init.returncode, 0, init.stderr)
+        processes = []
+        for number in range(8):
+            processes.append(subprocess.Popen(
+                [sys.executable, str(TOOL_PATH), "create-node",
+                 "--root", workdir, "--run-id", "race",
+                 "--expect-generation", "1", "--node-id", f"node{number}",
+                 "--class", "PURE", "--model", "gpt-5.6-luna",
+                 "--effort", "low", "--outcome", f"work {number}",
+                 "--base-revision", "rev1", "--gate", "report",
+                 "--launch-nonce", f"nonce-race-{number:04d}"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True))
+        results = [process.communicate(timeout=60) + (process.returncode,)
+                   for process in processes]
+        codes = [result[2] for result in results]
+        self.assertEqual(codes.count(0), 1, results)
+        self.assertTrue(all(code in {0, sl.EXIT_STALE} for code in codes),
+                        results)
+        ledger = sl.load_ledger(workdir, "race")
+        self.assertEqual(ledger["generation"], 2)
+        self.assertEqual(len(ledger["nodes"]), 1)
+
+
+class TestAtomicPersistence(LedgerHarness):
+    def test_atomic_replace_failure_preserves_canonical(self):
+        path = Path(sl.ledger_path(self.dir, self.RUN))
+        before = path.read_bytes()
+        original = sl.os.replace
+
+        def fail_replace(_source, _target):
+            raise OSError("injected replace failure")
+
+        sl.os.replace = fail_replace
+        try:
+            with self.assertRaises(OSError):
+                self.create("not-written")
+        finally:
+            sl.os.replace = original
+        self.assertEqual(path.read_bytes(), before)
+        self.assertFalse(any(path.parent.glob("ledger.json.tmp.*")))
+        self.assertNotIn("not-written#1", sl.load_ledger(
+            self.dir, self.RUN)["nodes"])
+
+
+class TestBoundaryErrors(LedgerHarness):
+    def test_input_and_capability_boundaries(self):
+        finding = sl.Finding("VIOLATION", "E_TEST", "node#1", "bad")
+        self.assertEqual(finding.as_dict()["code"], "E_TEST")
+        for value in ("missing-colon", ":missing-type", "path:",
+                      "path:/absolute", "path:C:\\absolute", "path:."):
+            self.expect((sl.EXIT_SEMANTIC if "absolute" in value else
+                         sl.EXIT_USAGE), sl.canon_scope_entry, value)
+        self.expect(sl.EXIT_USAGE, sl.compute_fingerprint,
+                    "outcome", "rev", "not-a-digest", [], "gate")
+        self.expect(sl.EXIT_USAGE, sl.run_dir, self.dir, "bad run id")
+        self.expect(sl.EXIT_USAGE, sl.ensure_runtime_directory,
+                    self.dir, "bad run id")
+        missing_root = tempfile.mkdtemp(prefix="swarm-missing-run-")
+        self.addCleanup(shutil.rmtree, missing_root, ignore_errors=True)
+        self.expect(sl.EXIT_USAGE, sl.ensure_runtime_directory,
+                    missing_root, "missing")
+        self.assertEqual(sl.capability_profile({
+            "thread_creation": True, "thread_listing": True,
+            "result_collection": True,
+            "worktree_control": True})["tier"], "ledger-assisted")
+        with self.assertRaises(sl.LedgerError) as ctx:
+            sl.capture_git_baseline(os.path.join(self.dir, "not-a-repo"))
+        self.assertEqual(ctx.exception.exit_code, sl.EXIT_USAGE)
+
+    def test_init_and_create_argument_boundaries(self):
+        invalid_capabilities = [
+            ["missing-equals"], ["bad key=true"],
+            ["same=true", "same=false"], ["value=maybe"],
+        ]
+        for index, capabilities in enumerate(invalid_capabilities):
+            target = tempfile.mkdtemp(prefix="swarm-invalid-cap-")
+            self.addCleanup(shutil.rmtree, target, ignore_errors=True)
+            with self.assertRaises(sl.LedgerError) as ctx:
+                sl.op_init(target, f"invalid-{index}", "test", "digest",
+                           capabilities, "tester")
+            self.assertEqual(ctx.exception.exit_code, sl.EXIT_USAGE)
+
+        self.expect(sl.EXIT_USAGE, self.create, "bad id")
+        self.expect(sl.EXIT_USAGE, self.create, "bad-class", klass="NOPE")
+        self.expect(sl.EXIT_USAGE, self.create, "bad-effort", effort="minimal")
+        self.expect(sl.EXIT_SEMANTIC, self.create, "pure-resource",
+                    resources=["path:src"])
+        self.expect(sl.EXIT_SEMANTIC, self.create, "dup-writer",
+                    klass="ISOLATED", resources=["path:src"],
+                    model="gpt-5.6-terra", effort="high", dup_group="g")
+        self.expect(sl.EXIT_USAGE, self.create, "bad-join", join="quorum:0")
+
+    def test_json_and_baseline_failure_edges(self):
+        payload = Path(self.dir, "non-standard.json")
+        payload.write_text('{"value": NaN}', encoding="utf-8")
+        self.expect(sl.EXIT_CORRUPT, sl.safe_load_json, str(payload), 1000)
+        missing = Path(self.dir, "missing.json")
+        self.expect(sl.EXIT_CORRUPT, sl.safe_load_json, str(missing), 1000)
+        baseline = sl.capture_git_baseline(str(REPO_ROOT))
+        with self.assertRaises(sl.LedgerError) as ctx:
+            sl.verify_git_baseline(str(REPO_ROOT), "0" * 40,
+                                   baseline["dirty_digest"])
+        self.assertEqual(ctx.exception.exit_code, sl.EXIT_AMBIGUOUS)
+        self.assertIn("revision expected", ctx.exception.message)
+
+
 # ---------------------------------------------------------------------------
 # CLI smoke tests (subprocess): exit codes are the machine contract
 # ---------------------------------------------------------------------------
@@ -1145,9 +1423,14 @@ class TestCli(unittest.TestCase):
         self.assertEqual(out.returncode, 0, out.stderr)
         out = self.run_cli("init", *run, "--task-type", "demo",
                            "--task-digest", "digest",
+                           "--capability", "thread_creation=true",
+                           "--capability", "thread_listing=true",
+                           "--capability", "result_collection=true",
                            "--capability", "unique_launch_discovery=true",
+                           "--capability", "one_shot_fence=true",
                            cwd=workdir)
         self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("capability tier", out.stdout)
         out = self.run_cli(
             "create-node", *run, "--expect-generation", "1",
             "--node-id", "scan", "--class", "PURE",
@@ -1168,6 +1451,141 @@ class TestCli(unittest.TestCase):
         self.assertEqual(out.returncode, 0)
         parsed = json.loads(out.stdout)
         self.assertTrue(parsed["ok"])
+
+        for generation, target in ((2, "READY"), (3, "CLAIMED"),
+                                   (4, "LAUNCHING")):
+            out = self.run_cli("transition", *run, "--expect-generation",
+                               str(generation), "scan#1", target,
+                               cwd=workdir)
+            self.assertEqual(out.returncode, 0, out.stderr)
+        out = self.run_cli("record-dispatch", *run,
+                           "--expect-generation", "5", "scan#1",
+                           cwd=workdir)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        out = self.run_cli("transition", *run, "--expect-generation", "6",
+                           "scan#1", "RUNNING", "--thread-id",
+                           "thread-cli-scan", cwd=workdir)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        receipt = {
+            "run_id": "cli-run", "node_id": "scan", "attempt": 1,
+            "status": "SUCCEEDED", "thread_id": "thread-cli-scan",
+            "model_effort": "gpt-5.6-luna/low", "base_revision": "rev1",
+            "artifact": "reports/scan.md", "touched_paths": [],
+            "commands": [], "processes": {"spawned": [],
+                                                "remaining_live": []},
+            "resources_released": [], "artifact_hashes": {},
+            "descendant_thread_ids": [], "assumptions": [],
+            "unresolved_risks": [], "cleanup_items": [],
+        }
+        receipt_path = Path(workdir, "receipt.json")
+        receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+        out = self.run_cli("transition", *run, "--expect-generation", "7",
+                           "scan#1", "SUCCEEDED", "--receipt",
+                           str(receipt_path), cwd=workdir)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        out = self.run_cli("set-disposition", *run, "--expect-generation",
+                           "8", "scan#1", "--disposition", "INTEGRATED",
+                           "--evidence", "accepted by CLI test", cwd=workdir)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        out = self.run_cli("show", *run, cwd=workdir)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("capability tier", out.stdout)
+        out = self.run_cli("recover", *run, cwd=workdir)
+        self.assertEqual(out.returncode, 0, out.stderr)
+
+    def test_cli_reference_and_git_baseline_commands(self):
+        out = self.run_cli("verify-reference-set", cwd=REPO_ROOT)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        report = json.loads(out.stdout)
+        self.assertEqual(report["protocol_version"], sl.PROTOCOL_VERSION)
+        out = self.run_cli("capture-baseline", "--worktree", str(REPO_ROOT),
+                           cwd=REPO_ROOT)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        baseline = json.loads(out.stdout)
+        out = self.run_cli(
+            "verify-baseline", "--worktree", str(REPO_ROOT),
+            "--expected-revision", baseline["revision"],
+            "--expected-dirty-digest", baseline["dirty_digest"],
+            cwd=REPO_ROOT)
+        self.assertEqual(out.returncode, 0, out.stderr)
+
+    def test_cli_one_shot_release_and_reconcile_commands(self):
+        workdir = tempfile.mkdtemp(prefix="swarm-cli-guarded-")
+        self.addCleanup(shutil.rmtree, workdir, ignore_errors=True)
+        run = ["--root", workdir, "--run-id", "guarded"]
+        out = self.run_cli(
+            "init", *run, "--task-type", "demo", "--task-digest", "digest",
+            "--capability", "unique_launch_discovery=true",
+            "--capability", "one_shot_fence=true", cwd=workdir)
+        self.assertEqual(out.returncode, 0, out.stderr)
+
+        def generation():
+            return str(sl.load_ledger(workdir, "guarded")["generation"])
+
+        def transition(ref, target, *extra):
+            result = self.run_cli(
+                "transition", *run, "--expect-generation", generation(),
+                ref, target, *extra, cwd=workdir)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+        out = self.run_cli(
+            "create-node", *run, "--expect-generation", generation(),
+            "--node-id", "shot", "--class", "ONE_SHOT", "--model",
+            "gpt-5.6-terra", "--effort", "high", "--outcome", "run once",
+            "--base-revision", "rev1", "--gate", "sealed output",
+            "--launch-nonce", "nonce-cli-shot-1", "--resource", "db:sealed",
+            cwd=workdir)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        transition("shot#1", "READY")
+        transition("shot#1", "CLAIMED")
+        transition("shot#1", "LAUNCHING")
+        out = self.run_cli("record-dispatch", *run, "--expect-generation",
+                           generation(), "shot#1", cwd=workdir)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        transition("shot#1", "PREPARING", "--thread-id", "thread-shot-cli")
+        transition("shot#1", "ARMED", "--arm-nonce", "arm-cli-shot-0001",
+                   "--readiness-evidence", "fresh target verified")
+        out = self.run_cli(
+            "record-arm-dispatch", *run, "--expect-generation", generation(),
+            "shot#1", cwd=workdir)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        transition("shot#1", "RUNNING", "--arm-acknowledged")
+
+        out = self.run_cli(
+            "create-node", *run, "--expect-generation", generation(),
+            "--node-id", "writer", "--class", "ISOLATED", "--model",
+            "gpt-5.6-terra", "--effort", "high", "--outcome", "prepare",
+            "--base-revision", "rev1", "--gate", "ready",
+            "--launch-nonce", "nonce-cli-writer-1", "--resource", "path:src",
+            cwd=workdir)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        transition("writer#1", "READY")
+        transition("writer#1", "CLAIMED")
+        out = self.run_cli(
+            "release-resources", *run, "--expect-generation", generation(),
+            "writer#1", "--evidence", "canceled before launch", cwd=workdir)
+        self.assertEqual(out.returncode, 0, out.stderr)
+
+        out = self.run_cli(
+            "create-node", *run, "--expect-generation", generation(),
+            "--node-id", "uncertain", "--class", "PURE", "--model",
+            "gpt-5.6-luna", "--effort", "low", "--outcome", "inspect",
+            "--base-revision", "rev1", "--gate", "report",
+            "--launch-nonce", "nonce-cli-unknown-1", cwd=workdir)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        transition("uncertain#1", "READY")
+        transition("uncertain#1", "CLAIMED")
+        transition("uncertain#1", "LAUNCHING")
+        out = self.run_cli("record-dispatch", *run, "--expect-generation",
+                           generation(), "uncertain#1", cwd=workdir)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        transition("uncertain#1", "UNKNOWN", "--evidence",
+                   "complete listing found no delivery")
+        out = self.run_cli(
+            "reconcile", *run, "--expect-generation", generation(),
+            "uncertain#1", "--evidence", "nonce absent in complete listing",
+            "--outcome", "no_delivery_proven", cwd=workdir)
+        self.assertEqual(out.returncode, 0, out.stderr)
 
     def test_fingerprint_command_is_deterministic(self):
         workdir = tempfile.mkdtemp(prefix="swarm-cli-")

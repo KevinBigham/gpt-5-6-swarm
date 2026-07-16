@@ -1,6 +1,8 @@
-# Deterministic enforcement
+# Deterministic recorded-control-plane enforcement
 
-Phase 1 turns represented safety-critical control-plane invariants from prose
+Protocol reference set: `1.2.0`.
+
+The enforcement layer turns represented safety-critical control-plane invariants from prose
 the coordinator must remember into checks a program refuses to violate. The
 protocol documents remain the source of doctrine; `scripts/swarm_ledger.py`
 is the source of enforcement for the fields it represents.
@@ -30,6 +32,8 @@ Enforced deterministically (the tool fails closed):
   attempt without explicit recorded authority; a `ONE_SHOT` lineage never
   gets attempt N+1
 - schema/protocol version compatibility: unknown future versions refuse to run
+- packaged reference-set compatibility: every normative document carries the
+  same protocol stamp, and `init` refuses missing or mixed-version references
 - adversarial input rejection: size caps, depth caps, duplicate JSON keys,
   control characters, identifier grammar, path traversal, symlinks, and
   non-regular ledger/receipt files
@@ -39,7 +43,7 @@ model/effort choice within the whitelist, semantic (paraphrase-level)
 deduplication beyond canonical text form, brief quality, when to escalate,
 and everything in `ROUTES.md`.
 
-The tool enforces consistency of recorded claims; it does not prove the real
+The tool deterministically enforces consistency of recorded claims; it does not prove the real
 host, repository, process, or external service honored them. Actual worktree
 identity, diffs, artifact bytes/hashes, process liveness, authority, and
 external fencing remain evidence the coordinator must independently inspect.
@@ -82,7 +86,9 @@ T="$SWARM_SKILL_DIR/scripts/swarm_ledger.py"
 
 python3 "$T" init --run-id run-01 --task-type build \
   --task-digest "sha256:<digest-of-task-statement>" \
+  --capability thread_creation=true \
   --capability thread_listing=true \
+  --capability result_collection=true \
   --capability unique_launch_discovery=true \
   --capability background_sessions=false
 
@@ -105,6 +111,12 @@ python3 "$T" transition --run-id run-01 --expect-generation 7 recon#1 SUCCEEDED 
 
 python3 "$T" validate --run-id run-01        # read-only, any time
 python3 "$T" show --run-id run-01            # compact run table
+
+# Git baseline evidence before a mutation or integration gate
+python3 "$T" capture-baseline --worktree /absolute/path/to/worktree
+python3 "$T" verify-baseline --worktree /absolute/path/to/worktree \
+  --expected-revision <captured-head> \
+  --expected-dirty-digest sha256:<captured-status-digest>
 ```
 
 Order matters by design: record `LAUNCHING` and the dispatch *before*
@@ -123,6 +135,9 @@ exactly once, and `RUNNING` requires acknowledged delivery
 | --- | --- | --- |
 | `init` | yes | create the run ledger with a host capability snapshot |
 | `fingerprint` | no | compute a normalized task fingerprint |
+| `verify-reference-set` | no | fail if packaged normative document versions are missing or mixed |
+| `capture-baseline` | no | report Git HEAD plus a digest of dirty/untracked state |
+| `verify-baseline` | no | exit 7 when Git HEAD or dirty-state evidence drifted |
 | `create-node` | yes | add a `PLANNED` node (dedup, nonce, class, scope checks) |
 | `transition` | yes | apply one allowed state change with required evidence |
 | `record-dispatch` | yes | record that the thread-create call was issued |
@@ -156,8 +171,10 @@ inspect the file".
 
 ## Failure and recovery behavior
 
-- Atomic persistence: the ledger is written through a securely created,
-  owner-only same-directory temp file, fsynced, and `os.replace`d. Symlinks
+- Atomic persistence: on a local filesystem with ordinary same-directory
+  rename semantics, the ledger is written through a securely created,
+  owner-only same-directory temp file, fsynced, and `os.replace`d; the parent
+  directory is fsynced when the platform permits it. Symlinks
   and non-regular files are rejected. A crash mid-write leaves the previous canonical intact plus
   an orphan `ledger.json.tmp.*` that `recover` reports and `recover --apply`
   removes. The canonical file is never modified in place.
@@ -192,6 +209,9 @@ coordinator to what was declared:
 - guarded classes (`NON_IDEMPOTENT`, `EXCLUSIVE_UNKNOWN`, `ONE_SHOT`)
   require `unique_launch_discovery=true`, else creation is refused and the
   route must be narrowed exactly as `SKILL.md` prescribes;
+- `ONE_SHOT` additionally requires `one_shot_fence=true`, declared only after
+  verifying a fresh output target, target-side idempotency/transaction, or
+  effective external fence; this is a recorded assertion, not host proof;
 - receipts reporting spawned processes require `background_sessions=true`;
 - `ultra` effort is refused unconditionally for Swarm nodes;
 - experimental host features default to absent: an undeclared capability is
@@ -218,18 +238,22 @@ supports before declaring it.
 
 ## Versioning and compatibility contract
 
-Three independent version fields travel in every ledger:
+Three independent version fields travel in every ledger, and one reference-set
+stamp travels in every normative skill document:
 
-- `protocol_version` (currently `1.1.0`) - the prose protocol. MAJOR
+- `protocol_version` and the packaged reference set (currently `1.2.0`) - the prose protocol. MAJOR
   changes alter invariant semantics; MINOR changes add guidance or
   enforcement without weakening an existing invariant; PATCH is editorial.
   The prompt-only protocol as published at the base commit is retroactively
-  `1.0.0`; `1.1.0` adds the enforcement layer and changes no doctrine. Tool
-  `0.1.x` accepts protocol `1.1.x` and refuses other major/minor series.
+  `1.0.0`; `1.1.0` adds the enforcement layer; `1.2.0` adds reference-set
+  gating, capability truth, Git-baseline evidence, one-shot fence gating, and
+  the untrusted-artifact boundary. Tool `0.2.x` accepts protocol `1.2.x` and
+  refuses other major/minor series. `verify-reference-set` and `init` require
+  an exact stamp in every packaged normative document.
 - `schema_version` (currently `1`, an integer) - the ledger document shape.
   The tool refuses any version outside its supported set with exit 6 and
   mutates nothing. There is no silent up- or down-conversion.
-- `tool_version` (currently `0.1.0`) - the validator build that last wrote
+- `tool_version` (currently `0.2.0`) - the validator build that last wrote
   the ledger, recorded for forensics.
 
 This section *is* the compatibility contract: nothing beyond it is promised.
