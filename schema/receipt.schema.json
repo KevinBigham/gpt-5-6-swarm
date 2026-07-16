@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/KevinBigham/gpt-5-6-swarm/schema/receipt.schema.json",
+  "title": "Swarm worker receipt (JSON transcription)",
+  "description": "The JSON form of the evidence-bearing terminal receipt from references/REPORTING.md. Informational: scripts/swarm_ledger.py additionally enforces identity, pinned base, model/effort, touched-path scope, resource accounting, no live processes, and no descendants.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["run_id", "node_id", "attempt", "status", "thread_id",
+               "model_effort", "base_revision", "artifact", "touched_paths",
+               "commands", "processes", "resources_released",
+               "artifact_hashes", "descendant_thread_ids", "assumptions",
+               "unresolved_risks", "cleanup_items"],
+  "properties": {
+    "run_id": {"type": "string"},
+    "node_id": {"type": "string"},
+    "attempt": {"type": "integer", "minimum": 1},
+    "status": {"enum": ["SUCCEEDED", "FAILED", "ABORTED", "CANCELED"]},
+    "thread_id": {"type": "string"},
+    "model_effort": {"type": "string", "description": "model/effort, e.g. gpt-5.6-terra/high"},
+    "base_revision": {"type": "string"},
+    "artifact": {"type": "string"},
+    "touched_paths": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+    "commands": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["command", "exit_code"],
+        "additionalProperties": false,
+        "properties": {"command": {"type": "string"}, "exit_code": {"type": "integer"}, "result": {"type": "string"}}
+      }
+    },
+    "processes": {
+      "type": "object",
+      "required": ["spawned", "remaining_live"],
+      "additionalProperties": false,
+      "properties": {
+        "spawned": {"type": "array", "items": {"type": "string"}},
+        "remaining_live": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "resources_released": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+    "artifact_hashes": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}},
+    "descendant_thread_ids": {"type": "array", "items": {"type": "string"}},
+    "assumptions": {"type": "array", "items": {"type": "string"}},
+    "unresolved_risks": {"type": "array", "items": {"type": "string"}},
+    "cleanup_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["item", "owner"],
+        "additionalProperties": false,
+        "properties": {"item": {"type": "string"}, "owner": {"type": "string"}}
+      }
+    }
+  }
+}

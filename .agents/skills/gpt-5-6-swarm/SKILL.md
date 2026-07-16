@@ -1,16 +1,17 @@
 ---
 name: gpt-5-6-swarm
-description: Fan out one task through safe parallel GPT-5.6 worker threads with isolated writes, evidence-based reconciliation, and checkable handoffs.
-disable-model-invocation: true
+description: Orchestrate complex work through safe parallel GPT-5.6 Codex subagents with isolated writes, evidence-based reconciliation, and checkable handoffs. Use only when the user explicitly asks for a swarm, multiple agents or chats, delegation, or parallel agent work; keep small or tightly coupled tasks serial.
 ---
 
 # GPT-5.6 Swarm
 
 Parallel where independent. Relay where dependent.
 
-Turn the user's task into a coordinator-owned dependency graph, run every safe ready lane concurrently, and reconcile real artifacts through explicit gates. Use persistent, user-visible Codex threads. Do not replace them with hidden subprocess agents.
+Protocol version `1.1.0` (compatibility contract: `references/ENFORCEMENT.md`).
 
-Invocation explicitly authorizes the visible child threads required by the route, including deliberate GPT-5.6 model and effort selection. It does not authorize destructive actions, external publication, deployment, purchases, messages, secrets access, or other side effects not already authorized by the user.
+Turn the user's task into a coordinator-owned dependency graph, run every safe ready lane concurrently, and reconcile real artifacts through explicit gates. Use host-managed Codex subagent threads whose identity, lifecycle, and results the coordinator can account for. Do not replace them with hidden subprocess agents.
+
+Invocation explicitly authorizes the host-managed child threads required by the route, including deliberate GPT-5.6 model and effort selection where the host supports it. It does not authorize destructive actions, external publication, deployment, purchases, messages, secrets access, or other side effects not already authorized by the user.
 
 The Sol coordinator owns the outcome, graph, worker budget, resource ownership, integration, and final report. More chats are useful only when their work is independent and checkable; never create filler workers.
 
@@ -20,6 +21,9 @@ Before launching workers, always read these files completely:
 
 - [`references/ROUTES.md`](references/ROUTES.md) for worker budgets and task-specific graph templates.
 - [`references/REPORTING.md`](references/REPORTING.md) for worker briefs, evidence handoffs, progress updates, and the final receipt.
+- [`references/SCHEDULING.md`](references/SCHEDULING.md) for the bounded peak-concurrency policy.
+
+If the host permits local command execution and control-plane state writes, read the operator contract at the start of [`references/ENFORCEMENT.md`](references/ENFORCEMENT.md) and maintain the launch ledger through `scripts/swarm_ledger.py`; the ledger is then canonical for its enforced control-plane fields. Keep the in-context route table as the human-visible plan and record for judgment fields and real-world evidence the tool cannot verify. Read the command and recovery sections only when operating or repairing the ledger. Without either capability, keep the prompt-only in-context ledger exactly as specified here and report the fallback.
 
 For an all-`PURE`, foreground-only swarm, read the action-class, canonical-ledger/deduplication, canonical-preflight-receipt, worker-accounting, drift, and completion-check sections of [`references/CONCURRENCY.md`](references/CONCURRENCY.md). Read that file completely before any isolated or shared write, command-running validator, background process, external effect, or one-shot action.
 
@@ -28,8 +32,8 @@ If and only if deployment is authorized and included in the graph, also read [`D
 ## Preflight
 
 1. Restate the outcome, acceptance criteria, constraints, allowed mutations, forbidden actions, and external-side-effect authority. Infer ordinary implementation details; do not infer destructive or public authority.
-2. Build the capability matrix: project/thread listing, create/read/message, unique launch discovery, cancel/interrupt, foreground-session completion, background-session liveness/stop, process inspection, worktree starting-state control, and resource locking/fencing. Project/thread listing, creation, reading, and messaging are the minimum for read-only fan-out. Missing stronger capabilities narrow the route as described below; never promise a control the host cannot provide.
-3. Resolve the exact project ID for repository work. Use a projectless target only for general tasks.
+2. Build the capability matrix: subagent listing, creation, result collection and messaging; per-child model selection; per-child effort selection; unique launch discovery; cancel/interrupt; authoritative live-slot limit; foreground-session completion; background-session liveness/stop; process inspection; worktree starting-state control; resource locking/fencing; and permission to write control-plane state. Creation, accounting, and result collection are the minimum for read-only fan-out. Missing stronger capabilities narrow the route as described below; never promise a control the host cannot provide.
+3. When the host routes repository work by project ID, resolve the exact ID. Otherwise use the current repository/workspace context; use a projectless target only for general tasks.
 4. Capture the starting state. For Git work, record branch, revision, dirty paths, untracked scope, and any user-owned changes that must remain untouched.
 5. Select a mode and budgets from `ROUTES.md`. `workers` is the total worker-node child-thread ceiling and `parallel` is the peak simultaneous worker-node ceiling; both exclude an optional proxy coordinator child. The proxy consumes one host slot and is reported separately. These are ceilings, not quotas.
 6. Classify every proposed node using `CONCURRENCY.md`. Unknown side effects default to exclusive execution.
@@ -38,7 +42,7 @@ If and only if deployment is authorized and included in the graph, also read [`D
 
 ## Coordinator selection
 
-If the invoking thread is confirmed to be Sol at High or above, it is the coordinator. Otherwise create one Sol Extra High child whose prompt explicitly invokes `/gpt-5-6-swarm` and includes `Swarm role: root coordinator`, the original outcome and authority, project/environment, captured base, budgets, constraints, and forbidden actions. That role marker prevents recursive coordinator creation.
+If the invoking thread is confirmed to be Sol at High or above, it is the coordinator. Otherwise, only when the host can select a child's model and effort, create one Sol Extra High child whose prompt explicitly invokes `$gpt-5-6-swarm` and includes `Swarm role: root coordinator`, the original outcome and authority, project/environment, captured base, budgets, constraints, and forbidden actions. If the host cannot select both settings, keep the current thread as coordinator and record the limitation. The role marker prevents recursive coordinator creation.
 
 Coordinator creation uses the same launch-nonce protocol as every node. If its creation outcome is ambiguous and the nonce cannot identify exactly one thread, mark the run `UNKNOWN` and do not create another coordinator.
 
@@ -60,7 +64,7 @@ Children may propose new nodes but may not create them. Nested delegation and Ul
 | Terra | Implementation, tests, refactors, bounded debugging, integration | High | `gpt-5.6-terra` |
 | Sol | Graph design, architecture, hard diagnosis, adjudication, route repair, high-risk review | Extra High | `gpt-5.6-sol` |
 
-Effort mappings are Light=`low`, Medium=`medium`, High=`high`, and Extra High=`xhigh`. Use only efforts supported by the selected host/model. Never silently lower effort. Swarm does not use Ultra because it can delegate outside the root scheduler. Substitute upward only: Luna to Terra, Terra to Sol. Stop if a genuinely Sol-level phase cannot run.
+Effort mappings are Light=`low`, Medium=`medium`, High=`high`, and Extra High=`xhigh`. Where `codex debug models` verifiably confirms it on the installed host, Sol adjudication may additionally record `max` as an explicit escalation above `xhigh` (see `references/HOSTS.md`). Use only efforts supported by the selected host/model. Never silently lower effort. Swarm does not use Ultra because it can delegate outside the root scheduler; the enforcement ledger refuses `ultra` for all Swarm nodes. Substitute upward only: Luna to Terra, Terra to Sol. Stop if a genuinely Sol-level phase cannot run.
 
 ## Build the swarm graph
 
@@ -81,6 +85,8 @@ Normal nodes use `PLANNED -> READY -> CLAIMED -> LAUNCHING -> RUNNING -> SUCCEED
 One-shot executors use `LAUNCHING -> PREPARING -> ARMED -> RUNNING`: `PREPARING` means the executor thread exists but is forbidden to act; `ARMED` means its identity/readiness and exact single-use arm nonce are recorded; only acknowledged delivery of that arm enters `RUNNING`.
 
 Before dispatch, `PLANNED | READY -> CANCELED`; `CLAIMED -> CANCELED` only after releasing its claims. `LAUNCHING -> CANCELED` is allowed only when no create/follow-up call was issued. After a dispatch call was issued, resolve the nonce: an identified execution moves to `CANCELING`, authoritative proof of no delivery permits `CANCELED`, and ambiguity becomes `UNKNOWN`. For live work, `PREPARING | ARMED | RUNNING -> CANCELING -> CANCELED | ABORTED | UNKNOWN` is the cancellation path.
+
+For non-`PURE` work, every claim includes at least one exclusive resource. Releasing a pre-launch `CLAIMED` node atomically returns it to `READY`; it must reclaim its resources before it can enter `LAUNCHING`. `PURE` nodes declare and hold no mutation resources.
 
 `SUCCEEDED`, `FAILED`, `CANCELED`, `ABORTED`, and `UNKNOWN` are terminal execution states. Separately track artifact disposition as `CURRENT`, `INVALIDATED`, `SUPERSEDED`, `REJECTED`, or `INTEGRATED`; changing artifact disposition never stops a live execution. `UNKNOWN` is fail-closed and cannot be retried automatically.
 
@@ -164,6 +170,6 @@ If an upstream contract changes, invalidate affected descendants. Reuse only out
 
 ## Completion
 
-The run is not complete while any action is claimed, launching, preparing, armed, running, canceling, or unknown, or while any worker, observable background process, resource lease, output, or cleanup item is unaccounted for. A synchronous foreground command is accounted for by terminal-tool completion plus exit status; deliberately backgrounded work additionally requires a host-exposed session/process identity and liveness/stop controls, otherwise it is prohibited.
+The run is not complete while any action is claimed, launching, preparing, armed, running, canceling, or unreconciled unknown, or while any worker, observable background process, resource lease, output, or cleanup item is unaccounted for. A resolved `UNKNOWN` remains immutable history but is accounted for only when its recorded reconciliation proof passes review and all affected resources are explicitly released. A synchronous foreground command is accounted for by terminal-tool completion plus exit status; deliberately backgrounded work additionally requires a host-exposed session/process identity and liveness/stop controls, otherwise it is prohibited.
 
-Lead the final response with the finished outcome. Include the actual—not planned—receipt: coordinator identity, total visible children, worker thread IDs, models/efforts, artifacts, gates, worker count, scheduler-issued peak concurrency, integrations, escalations, invalidations, skipped lanes, external effects, and remaining risks. Call concurrency “observed” only when the host provides authoritative active-thread telemetry. Child threads are user-owned records; do not archive them automatically.
+Lead the final response with the finished outcome. Include the actual—not planned—receipt: coordinator identity, total accounted children, worker thread IDs, models/efforts, artifacts, gates, worker count, scheduler-issued peak concurrency, integrations, escalations, invalidations, skipped lanes, external effects, and remaining risks. Call concurrency “observed” only when the host provides authoritative active-thread telemetry. Retain child records according to host and user policy; never archive user-visible records automatically.
