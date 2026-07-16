@@ -13,7 +13,7 @@ promised.
 - **tool version** - `swarm_ledger.py` build, recorded in every ledger it
   writes.
 
-## Unreleased - protocol 1.4.0 / schema 2 / tool 0.4.0
+## protocol 1.4.0 / schema 2 / tool 0.4.0 - evidence, operator tooling, and plugin distribution (2026-07-16)
 
 - Repackaged the repository as a Git-installable Codex marketplace with one
   canonical skill tree, a validated plugin manifest, preserved MIT notices,
